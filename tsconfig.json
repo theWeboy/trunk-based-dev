@@ -1,0 +1,21 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitReturns": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "types": ["bun"],
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "baseUrl": ".",
+    "outDir": "dist",
+    "rootDir": "."
+  },
+  "include": ["services/**/*.ts", "shared/**/*.ts", "test/**/*.ts", "scripts/**/*.ts", "encore.app"],
+  "exclude": ["node_modules", "dist", ".encore", "encore.gen"]
+}

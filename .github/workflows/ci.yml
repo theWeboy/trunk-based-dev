@@ -1,0 +1,100 @@
+# Runs on every PR and push to main. Enforces changeset when PR touches app code.
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: oven-sh/setup-bun@v1
+      - name: Cache Bun dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            node_modules
+            ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-bun-
+      - run: bun install --frozen-lockfile
+      - run: bun run biome check
+      - run: bun run typecheck
+      - run: bun run test:run -- --coverage --coverage-threshold=90
+
+      - name: Check for changeset (skip if label or docs-only)
+        if: github.event_name == 'pull_request'
+        env:
+          PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+        run: |
+          if [[ "$PR_LABELS" == *"skip-changeset"* ]]; then
+            echo "Label skip-changeset present — skipping changeset check."
+            exit 0
+          fi
+          # Files changed in this PR (excluding docs, test, config, changeset README)
+          CODE_FILES=$(git diff --name-only origin/${{ github.base_ref }}...HEAD -- \
+            'services/**' 'shared/**' 'db/**' 'scripts/*.ts' 'package.json' 'encore.app' \
+            '*.json' 2>/dev/null | wc -l)
+          CHANGESET_FILES=$(git diff --name-only origin/${{ github.base_ref }}...HEAD -- '.changeset/*.md' 2>/dev/null | grep -v README.md | wc -l)
+          if [ "$CODE_FILES" -gt 0 ] && [ "$CHANGESET_FILES" -eq 0 ]; then
+            echo "::error::This PR changes application code but includes no changeset. Run 'bun changeset' and commit the generated file."
+            echo "See .changeset/README.md. To skip (e.g. docs-only), add label 'skip-changeset'."
+            exit 1
+          fi
+          echo "Changeset check passed."
+
+      - name: SonarCloud SAST
+        if: github.event_name == 'pull_request' && env.SONAR_TOKEN != ''
+        uses: SonarSource/sonarcloud-github-action@v3
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        with:
+          args: >
+            -Dsonar.organization=${{ github.repository_owner }}
+            -Dsonar.projectKey=${{ github.repository_owner }}_trunk-based-dev
+
+      - name: Cache kubeconform
+        if: hashFiles('k8s/**') != ''
+        id: cache-kubeconform
+        uses: actions/cache@v4
+        with:
+          path: kubeconform
+          key: kubeconform-v0.6.7
+
+      - name: Install kubeconform
+        if: hashFiles('k8s/**') != '' && steps.cache-kubeconform.outputs.cache-hit != 'true'
+        run: |
+          curl -sL https://github.com/yannh/kubeconform/releases/download/v0.6.7/kubeconform-linux-amd64.tar.gz | tar xz
+
+      - name: Validate K8s manifests
+        if: hashFiles('k8s/**') != ''
+        run: |
+          chmod +x ./kubeconform
+          set -o pipefail
+          FAILED=0
+          # Validate the rendered output of each overlay (kustomize build → kubeconform).
+          # Validating raw overlay directories only checks kustomization.yaml syntax, not
+          # the actual Kubernetes objects that kubectl apply -k would send to the API server.
+          for overlay in k8s/overlays/*/*/; do
+            if [ -d "$overlay" ]; then
+              echo "--- Validating rendered output of $overlay ---"
+              kustomize build "$overlay" | ./kubeconform -strict -ignore-missing-schemas - || FAILED=1
+            fi
+          done
+          if [ "$FAILED" -eq 1 ]; then
+            echo "::error::K8s manifest validation failed"
+            exit 1
+          fi

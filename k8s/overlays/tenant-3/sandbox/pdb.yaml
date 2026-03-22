@@ -1,0 +1,51 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: trunk-api-pdb
+  labels:
+    app: trunk-api
+    project: trunk
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: trunk-api
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: trunk-notifications-pdb
+  labels:
+    app: trunk-notifications
+    project: trunk
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: trunk-notifications
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: trunk-orders-pdb
+  labels:
+    app: trunk-orders
+    project: trunk
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: trunk-orders
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: trunk-payments-pdb
+  labels:
+    app: trunk-payments
+    project: trunk
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: trunk-payments

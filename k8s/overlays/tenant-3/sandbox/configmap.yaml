@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: trunk-config
+  namespace: trunk-sandbox-tenant-3
+data:
+  TENANT: "tenant-3"
+  NODE_ENV: "staging"
+  REGION: "europe-west1"
+  CLOUD: "gcp"
+  LOG_LEVEL: "info"

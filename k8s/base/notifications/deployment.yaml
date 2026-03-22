@@ -1,0 +1,81 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: trunk-notifications
+  labels:
+    app: trunk-notifications
+    project: trunk
+spec:
+  replicas: 1
+  revisionHistoryLimit: 10
+  selector:
+    matchLabels:
+      app: trunk-notifications
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app: trunk-notifications
+        project: trunk
+    spec:
+      serviceAccountName: trunk-service-account
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 2000
+        fsGroup: 2000
+      initContainers:
+        - name: ready-check
+          image: busybox:1.36
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+          command: ["sh", "-c", "echo ready && exit 0"]
+      containers:
+        - name: notifications
+          image: trunk-notifications:latest
+          imagePullPolicy: Always
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+          ports:
+            - name: http
+              containerPort: 4000
+          envFrom:
+            - configMapRef:
+                name: trunk-config
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+          startupProbe:
+            httpGet:
+              path: /notifications/health
+              port: 4000
+            periodSeconds: 5
+            failureThreshold: 60  # 60 × 5s = 5 minutes max startup window
+          readinessProbe:
+            httpGet:
+              path: /notifications/health
+              port: 4000
+            periodSeconds: 5
+            failureThreshold: 2
+          livenessProbe:
+            httpGet:
+              path: /notifications/health
+              port: 4000
+            periodSeconds: 15
+            failureThreshold: 3
+      volumes:
+        - name: tmp
+          emptyDir: {}
+      terminationGracePeriodSeconds: 30

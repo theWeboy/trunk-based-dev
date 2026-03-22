@@ -1,0 +1,28 @@
+# Sets a "pending" commit status for E2E Tests on every PR event.
+# This blocks merge until E2E is explicitly triggered via /run-e2e comment.
+name: E2E Gate
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened]
+
+permissions:
+  statuses: write
+
+jobs:
+  gate:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Set E2E status to pending
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.repos.createCommitStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              sha: context.payload.pull_request.head.sha,
+              state: 'pending',
+              context: 'E2E Tests',
+              description: 'Awaiting /run-e2e command'
+            });

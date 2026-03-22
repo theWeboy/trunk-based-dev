@@ -1,0 +1,101 @@
+# Runs E2E tests when a maintainer comments /run-e2e on a PR.
+# Updates the "E2E Tests" commit status so the merge gate opens on success.
+name: E2E Tests
+
+on:
+  issue_comment:
+    types: [created]
+
+concurrency:
+  group: e2e-${{ github.event.issue.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  statuses: write
+  pull-requests: read
+
+jobs:
+  e2e:
+    if: |
+      github.event.issue.pull_request &&
+      contains(github.event.comment.body, '/run-e2e') &&
+      (github.event.comment.author_association == 'MEMBER' ||
+       github.event.comment.author_association == 'OWNER' ||
+       github.event.comment.author_association == 'COLLABORATOR')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Get PR metadata
+        id: pr
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const pr = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.issue.number
+            });
+            core.setOutput('sha', pr.data.head.sha);
+            core.setOutput('ref', pr.data.head.ref);
+
+      - name: Set E2E status to in-progress
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.repos.createCommitStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              sha: '${{ steps.pr.outputs.sha }}',
+              state: 'pending',
+              context: 'E2E Tests',
+              description: 'Running E2E tests...'
+            });
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.pr.outputs.sha }}
+
+      - uses: oven-sh/setup-bun@v1
+
+      - name: Cache Bun dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            node_modules
+            ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-bun-
+
+      - run: bun install --frozen-lockfile
+
+      - name: Run E2E tests
+        id: e2e-tests
+        continue-on-error: true
+        run: bun run test:e2e
+
+      - name: Update E2E commit status
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const outcome = '${{ steps.e2e-tests.outcome }}';
+            const passed = outcome === 'success';
+            const cancelled = outcome === 'cancelled';
+            const state = passed ? 'success' : 'failure';
+            const description = passed
+              ? 'E2E tests passed'
+              : cancelled
+                ? 'E2E job cancelled or timed out'
+                : 'E2E tests failed — fix and re-run /run-e2e';
+            await github.rest.repos.createCommitStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              sha: '${{ steps.pr.outputs.sha }}',
+              state,
+              context: 'E2E Tests',
+              description,
+              target_url: `https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+            });
+            if (!passed) core.setFailed('E2E tests failed');

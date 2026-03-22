@@ -1,0 +1,14 @@
+{
+  "metadata": {
+    "app_id": "trunk",
+    "env_name": "production",
+    "env_type": "production",
+    "cloud": "gcp",
+    "base_url": "https://api.change-me.com"
+  },
+  "secrets": {
+    "NODE_ENV": { "$env": "NODE_ENV" },
+    "REGION": { "$env": "REGION" },
+    "TENANT": { "$env": "TENANT" }
+  }
+}

@@ -1,0 +1,443 @@
+# Deploy to Production. Use ref = main or an approved tag/ref from sandbox.
+# tenant = tenant-1 | tenant-2 | tenant-3 | all. When services = "all",
+# only changed services are built (shared/ or root deps = build all).
+name: Deploy to Production
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Git ref to deploy (branch or tag). Must match what was deployed to sandbox."
+        required: true
+      tenant:
+        description: "Target tenant: tenant-1, tenant-2, tenant-3, or all"
+        required: true
+        default: "all"
+        type: choice
+        options:
+          - all
+          - tenant-1
+          - tenant-2
+          - tenant-3
+      services:
+        description: "Comma-separated services or 'all' (auto-detect changed services)"
+        required: true
+        default: "all"
+      run_migrations:
+        description: "Force run database migrations (even if no migration files changed)"
+        required: false
+        default: false
+        type: boolean
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+permissions:
+  id-token: write
+  contents: write
+
+env:
+  AWS_REGION: us-east-1
+  ALL_SERVICES: "api orders notifications payments"
+
+jobs:
+  detect-changes:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      services_list: ${{ steps.list.outputs.list }}
+      migrations_changed: ${{ steps.filter.outputs.migrations }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+          fetch-depth: 2
+
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          base: 'HEAD^'
+          filters: |
+            api: 'services/api/**'
+            orders: 'services/orders/**'
+            notifications: 'services/notifications/**'
+            payments: 'services/payments/**'
+            migrations: 'migrations/**'
+            shared: |
+              shared/**
+              encore.app
+              package.json
+              bun.lock
+              bunfig.toml
+
+      - id: list
+        run: |
+          if [ "${{ steps.filter.outputs.shared }}" = "true" ]; then
+            echo "list=${{ env.ALL_SERVICES }}" >> $GITHUB_OUTPUT
+            echo "Building all services (shared or root deps changed)"
+          else
+            SVCS=""
+            [ "${{ steps.filter.outputs.api }}" = "true" ] && SVCS="$SVCS api"
+            [ "${{ steps.filter.outputs.orders }}" = "true" ] && SVCS="$SVCS orders"
+            [ "${{ steps.filter.outputs.notifications }}" = "true" ] && SVCS="$SVCS notifications"
+            [ "${{ steps.filter.outputs.payments }}" = "true" ] && SVCS="$SVCS payments"
+            SVCS="${SVCS# }"
+            if [ -z "$SVCS" ]; then
+              echo "list=${{ env.ALL_SERVICES }}" >> $GITHUB_OUTPUT
+              echo "No service paths changed; building all"
+            else
+              echo "list=$SVCS" >> $GITHUB_OUTPUT
+              echo "Building changed services: $SVCS"
+            fi
+          fi
+
+  pre-deploy-checks:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@v1
+      - name: Cache Bun dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            node_modules
+            ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-bun-
+      - run: bun install --frozen-lockfile
+      - run: bun run biome check
+      - run: bun run typecheck
+      - run: bun run test:run -- --coverage --coverage-threshold=90
+
+  setup-matrix:
+    needs: pre-deploy-checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+    steps:
+      - id: set-matrix
+        run: |
+          T="${{ inputs.tenant }}"
+          if [ "$T" = "all" ]; then
+            echo 'matrix=[{"tenant":"tenant-1","cloud":"aws"},{"tenant":"tenant-2","cloud":"gcp"},{"tenant":"tenant-3","cloud":"gcp"}]' >> $GITHUB_OUTPUT
+          elif [ "$T" = "tenant-1" ]; then
+            echo 'matrix=[{"tenant":"tenant-1","cloud":"aws"}]' >> $GITHUB_OUTPUT
+          elif [ "$T" = "tenant-2" ]; then
+            echo 'matrix=[{"tenant":"tenant-2","cloud":"gcp"}]' >> $GITHUB_OUTPUT
+          else
+            echo 'matrix=[{"tenant":"tenant-3","cloud":"gcp"}]' >> $GITHUB_OUTPUT
+          fi
+
+  build-and-push:
+    needs: [setup-matrix, detect-changes]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      git_sha: ${{ steps.meta.outputs.git_sha }}
+    strategy:
+      matrix: ${{ fromJson(needs.setup-matrix.outputs.matrix) }}
+      fail-fast: false
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+          fetch-depth: 0
+
+      - name: Version and SHA
+        id: meta
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          SHA=$(git rev-parse --short HEAD)
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "git_sha=$SHA" >> $GITHUB_OUTPUT
+          echo "Production image tags: ${SHA}, v${VERSION}, latest"
+
+      - name: Configure AWS (tenant-1)
+        if: matrix.tenant == 'tenant-1'
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.GH_ACTIONS_ROLE_ARN_TENANT_1 }}
+          aws-region: ${{ env.AWS_REGION }}
+      - name: Login ECR (tenant-1)
+        if: matrix.tenant == 'tenant-1'
+        run: |
+          aws ecr get-login-password --region ${{ env.AWS_REGION }} | \
+          docker login --username AWS --password-stdin ${{ secrets.ECR_REGISTRY_TENANT_1 }}
+
+      - name: Auth GCP (tenant-2)
+        if: matrix.tenant == 'tenant-2'
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER_TENANT_2 }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL_TENANT_2 }}
+      - name: Auth GCP (tenant-3)
+        if: matrix.tenant == 'tenant-3'
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER_TENANT_3 }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL_TENANT_3 }}
+      - name: Set up Cloud SDK (gcp)
+        if: matrix.cloud == 'gcp'
+        uses: google-github-actions/setup-gcloud@v2
+      - name: Docker GAR (tenant-2)
+        if: matrix.tenant == 'tenant-2'
+        run: gcloud auth configure-docker ${{ secrets.GAR_REGISTRY_TENANT_2 }} --quiet
+      - name: Docker GAR (tenant-3)
+        if: matrix.tenant == 'tenant-3'
+        run: gcloud auth configure-docker ${{ secrets.GAR_REGISTRY_TENANT_3 }} --quiet
+
+      - name: Cache node_modules and Encore build cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            node_modules
+            .encore
+          key: ${{ runner.os }}-encore-${{ hashFiles('bun.lock', 'package.json') }}
+          restore-keys: |
+            ${{ runner.os }}-encore-
+      - uses: oven-sh/setup-bun@v1
+      - run: bun install --frozen-lockfile
+
+      - name: Resolve services list
+        id: svcs
+        run: |
+          INPUT="${{ inputs.services }}"
+          if [ "$INPUT" = "all" ]; then
+            echo "list=${{ needs.detect-changes.outputs.services_list }}" >> $GITHUB_OUTPUT
+          else
+            echo "list=$(echo "$INPUT" | tr ',' ' ')" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Build and push production images
+        run: |
+          VERSION="${{ steps.meta.outputs.version }}"
+          SHA="${{ steps.meta.outputs.git_sha }}"
+          TENANT="${{ matrix.tenant }}"
+          [ "$TENANT" = "tenant-1" ] && INFRA_CONFIG="k8s/encore/infra.production.json" || INFRA_CONFIG="k8s/encore/infra.production.gcp.json"
+
+          if [ "$TENANT" = "tenant-1" ]; then
+            REGISTRY="${{ secrets.ECR_REGISTRY_TENANT_1 }}"
+          elif [ "$TENANT" = "tenant-2" ]; then
+            REGISTRY="${{ secrets.GAR_REGISTRY_TENANT_2 }}"
+          else
+            REGISTRY="${{ secrets.GAR_REGISTRY_TENANT_3 }}"
+          fi
+          BASE="${REGISTRY}/dhi-runtime-node:22-slim"
+          for SVC in ${{ steps.svcs.outputs.list }}; do
+            REPO="${REGISTRY}/trunk-${SVC}"
+            encore build docker "${REPO}:${SHA}" --services="${SVC}" --base="${BASE}" --config="${INFRA_CONFIG}"
+            docker tag "${REPO}:${SHA}" "${REPO}:v${VERSION}"
+            docker tag "${REPO}:${SHA}" "${REPO}:latest"
+            docker push "${REPO}:${SHA}"
+            docker push "${REPO}:v${VERSION}"
+            docker push "${REPO}:latest"
+          done
+          echo "Pushed ${TENANT} production tags: ${SHA}, v${VERSION}, latest"
+
+      - name: Trivy image scan (blocks on CRITICAL and HIGH)
+        run: |
+          SHA="${{ steps.meta.outputs.git_sha }}"
+          TENANT="${{ matrix.tenant }}"
+          if [ "$TENANT" = "tenant-1" ]; then
+            REGISTRY="${{ secrets.ECR_REGISTRY_TENANT_1 }}"
+          elif [ "$TENANT" = "tenant-2" ]; then
+            REGISTRY="${{ secrets.GAR_REGISTRY_TENANT_2 }}"
+          else
+            REGISTRY="${{ secrets.GAR_REGISTRY_TENANT_3 }}"
+          fi
+          FAILED=0
+          for SVC in ${{ steps.svcs.outputs.list }}; do
+            IMG="${REGISTRY}/trunk-${SVC}:${SHA}"
+            echo "Scanning ${IMG}..."
+            docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
+              aquasec/trivy:latest image --severity CRITICAL,HIGH --exit-code 1 "${IMG}" || FAILED=1
+          done
+          if [ "$FAILED" -eq 1 ]; then
+            echo "::error::Trivy found CRITICAL/HIGH vulnerabilities. Fix before deploying to production."
+            exit 1
+          fi
+
+  deploy:
+    needs: [setup-matrix, build-and-push, detect-changes]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      matrix: ${{ fromJson(needs.setup-matrix.outputs.matrix) }}
+      fail-fast: false
+    environment: production-${{ matrix.tenant }}
+    env:
+      NS: trunk-production-${{ matrix.tenant }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+
+      - name: Resolve version, SHA and services list
+        id: meta
+        run: |
+          echo "version=${{ needs.build-and-push.outputs.version }}" >> $GITHUB_OUTPUT
+          echo "sha=${{ needs.build-and-push.outputs.git_sha }}" >> $GITHUB_OUTPUT
+          if [ "${{ inputs.services }}" = "all" ]; then
+            echo "services_list=${{ needs.detect-changes.outputs.services_list }}" >> $GITHUB_OUTPUT
+          else
+            echo "services_list=$(echo "${{ inputs.services }}" | tr ',' ' ')" >> $GITHUB_OUTPUT
+          fi
+          echo "Deploying v${{ needs.build-and-push.outputs.version }} (SHA ${{ needs.build-and-push.outputs.git_sha }})"
+
+      - name: Configure AWS (tenant-1)
+        if: matrix.tenant == 'tenant-1'
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.GH_ACTIONS_ROLE_ARN_TENANT_1 }}
+          aws-region: ${{ env.AWS_REGION }}
+      - name: kubeconfig (tenant-1 EKS)
+        if: matrix.tenant == 'tenant-1'
+        run: aws eks update-kubeconfig --name ${{ secrets.EKS_CLUSTER_NAME_PROD_TENANT_1 }} --region ${{ env.AWS_REGION }}
+
+      - name: Auth GCP (tenant-2)
+        if: matrix.tenant == 'tenant-2'
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER_TENANT_2 }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL_TENANT_2 }}
+      - name: Auth GCP (tenant-3)
+        if: matrix.tenant == 'tenant-3'
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER_TENANT_3 }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL_TENANT_3 }}
+      - name: Set up gcloud (gcp)
+        if: matrix.cloud == 'gcp'
+        uses: google-github-actions/setup-gcloud@v2
+      - name: kubeconfig (tenant-2 GKE)
+        if: matrix.tenant == 'tenant-2'
+        run: gcloud container clusters get-credentials ${{ secrets.GKE_CLUSTER_NAME_PROD_TENANT_2 }} --region ${{ secrets.GKE_REGION_TENANT_2 || 'us-central1' }}
+      - name: kubeconfig (tenant-3 GKE)
+        if: matrix.tenant == 'tenant-3'
+        run: gcloud container clusters get-credentials ${{ secrets.GKE_CLUSTER_NAME_PROD_TENANT_3 }} --region ${{ secrets.GKE_REGION_TENANT_3 || 'europe-west1' }}
+
+      - name: Inject image tags & apply overlay
+        run: |
+          VERSION="${{ steps.meta.outputs.version }}"
+          TENANT="${{ matrix.tenant }}"
+          BUILT_SVCS="${{ steps.meta.outputs.services_list }}"
+          ALL_SVCS="${{ env.ALL_SERVICES }}"
+          NS="${{ env.NS }}"
+          if [ "$TENANT" = "tenant-1" ]; then
+            REGISTRY="${{ secrets.ECR_REGISTRY_TENANT_1 }}"
+          elif [ "$TENANT" = "tenant-2" ]; then
+            REGISTRY="${{ secrets.GAR_REGISTRY_TENANT_2 }}"
+          else
+            REGISTRY="${{ secrets.GAR_REGISTRY_TENANT_3 }}"
+          fi
+
+          # Inject image tags into the kustomization before applying.
+          # Built services get the versioned tag (v<semver>). Services not rebuilt
+          # preserve the currently-deployed image so the apply is a no-op for those pods.
+          for SVC in $ALL_SVCS; do
+            if echo "$BUILT_SVCS" | grep -qw "$SVC"; then
+              (cd k8s/overlays/${TENANT}/production && \
+                kustomize edit set image "trunk-${SVC}:latest=${REGISTRY}/trunk-${SVC}:v${VERSION}")
+            else
+              CURRENT_IMG=$(kubectl get deployment "trunk-${SVC}" -n "${NS}" \
+                -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null || true)
+              if [ -n "$CURRENT_IMG" ]; then
+                (cd k8s/overlays/${TENANT}/production && \
+                  kustomize edit set image "trunk-${SVC}:latest=${CURRENT_IMG}")
+              fi
+            fi
+          done
+
+          kubectl apply -k k8s/overlays/${TENANT}/production --server-side=true 2>/dev/null \
+            || kubectl apply -k k8s/overlays/${TENANT}/production
+
+      - name: Run database migrations (conditional)
+        if: needs.detect-changes.outputs.migrations_changed == 'true' || inputs.run_migrations == true
+        run: |
+          kubectl delete job trunk-api-migrate -n ${{ env.NS }} --ignore-not-found
+          kubectl apply -k k8s/overlays/${{ matrix.tenant }}/production -l type=migration --server-side=true 2>/dev/null \
+            || kubectl apply -k k8s/overlays/${{ matrix.tenant }}/production -l type=migration
+
+          kubectl wait --for=condition=complete job/trunk-api-migrate -n ${{ env.NS }} --timeout=180s || \
+            (echo "Migration job failed or timed out"; kubectl logs job/trunk-api-migrate -n ${{ env.NS }}; exit 1)
+
+      - name: Wait for rollout
+        run: |
+          SVCS="${{ steps.meta.outputs.services_list }}"
+          for SVC in $SVCS; do
+            if kubectl get deployment "trunk-${SVC}" -n ${{ env.NS }} 2>/dev/null; then
+              kubectl rollout status deployment/trunk-${SVC} -n ${{ env.NS }} --timeout=5m
+            fi
+          done
+
+      - name: Smoke test (with retries, fatal on failure)
+        run: |
+          kubectl port-forward -n "${{ env.NS }}" deployment/trunk-api 4000:4000 &
+          PF_PID=$!
+          PASSED=false
+          for i in 1 2 3 4 5; do
+            sleep 5
+            HTTP_CODE=$(curl -sf -o /dev/null -w "%{http_code}" http://localhost:4000/health 2>/dev/null || echo "000")
+            if [ "$HTTP_CODE" = "200" ]; then
+              echo "Production health check passed (HTTP 200) on attempt $i"
+              PASSED=true
+              break
+            fi
+            echo "Attempt $i: HTTP $HTTP_CODE — retrying..."
+          done
+          kill $PF_PID 2>/dev/null || true
+          if [ "$PASSED" = "false" ]; then
+            echo "::error::Production smoke test FAILED after 5 attempts. Investigate immediately."
+            exit 1
+          fi
+
+      - name: Deploy summary
+        run: |
+          echo "Deployed to ${{ env.NS }} (tenant=${{ matrix.tenant }})"
+          echo "Version: v${{ steps.meta.outputs.version }}"
+          echo "SHA: ${{ steps.meta.outputs.sha }}"
+
+  publish-release:
+    needs: [deploy, build-and-push]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+          fetch-depth: 0
+
+      - name: Resolve version
+        id: ver
+        run: echo "version=${{ needs.build-and-push.outputs.version }}" >> $GITHUB_OUTPUT
+
+      - name: Create git tag and push (idempotent)
+        run: |
+          VERSION="${{ steps.ver.outputs.version }}"
+          TAG="v${VERSION}"
+          if git rev-parse "$TAG" >/dev/null 2>&1; then
+            echo "Tag $TAG already exists; skipping push."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "$TAG" -m "Release $TAG (production deploy)"
+          git push origin "$TAG"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.ver.outputs.version }}
+          name: v${{ steps.ver.outputs.version }}
+          generate_release_notes: true
+          fail_on_unmatched_files: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

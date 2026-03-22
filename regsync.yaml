@@ -1,0 +1,30 @@
+# Mirror Docker Hardened Images (DHI) base image from dhi.io to all three tenant registries.
+#
+# The GitHub Actions workflow (.github/workflows/dhi-sync.yml) uses
+# regctl image copy directly (no regsync binary needed in CI).
+#
+# This file is the declarative config reference and can be used for
+# local/manual sync:
+#   regsync once --config regsync.yaml
+# after authenticating to dhi.io, ECR (tenant-1), and GAR (tenant-2, tenant-3).
+#
+# Replace placeholders with actual values before local use.
+sync:
+  # tenant-1: AWS ECR (us-east-1)
+  - source: dhi.io/node
+    target: ECR_REGISTRY_TENANT_1/dhi-runtime-node
+    type: image
+    tags:
+      allow: ["22-slim"]
+  # tenant-2: GCP Artifact Registry (us-central1)
+  - source: dhi.io/node
+    target: GAR_REGISTRY_TENANT_2/dhi-runtime-node
+    type: image
+    tags:
+      allow: ["22-slim"]
+  # tenant-3: GCP Artifact Registry (europe-west1)
+  - source: dhi.io/node
+    target: GAR_REGISTRY_TENANT_3/dhi-runtime-node
+    type: image
+    tags:
+      allow: ["22-slim"]

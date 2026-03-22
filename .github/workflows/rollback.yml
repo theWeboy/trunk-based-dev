@@ -1,0 +1,205 @@
+# Manual rollback workflow. Reverts a specific service to a previous revision.
+# Uses kubectl rollout undo or explicit image tag depending on input.
+name: Rollback
+
+on:
+  workflow_dispatch:
+    inputs:
+      tenant:
+        description: "Target tenant"
+        required: true
+        type: choice
+        options:
+          - tenant-1
+          - tenant-2
+          - tenant-3
+      environment:
+        description: "Target environment"
+        required: true
+        type: choice
+        options:
+          - dev
+          - sandbox
+          - production
+      service:
+        description: "Service to rollback (e.g. api, orders, notifications, payments)"
+        required: true
+      target_revision:
+        description: "Specific image tag to rollback to (e.g. abc1234 or v1.2.3). Leave empty to undo last rollout."
+        required: false
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: rollback-${{ inputs.environment }}-${{ inputs.tenant }}-${{ inputs.service }}
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: us-east-1
+
+jobs:
+  rollback:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment: ${{ inputs.environment }}-${{ inputs.tenant }}
+    env:
+      NS: trunk-${{ inputs.environment }}-${{ inputs.tenant }}
+      DEPLOYMENT: trunk-${{ inputs.service }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS (tenant-1)
+        if: inputs.tenant == 'tenant-1'
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.GH_ACTIONS_ROLE_ARN_TENANT_1 }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: kubeconfig (tenant-1 EKS)
+        if: inputs.tenant == 'tenant-1'
+        run: |
+          ENV="${{ inputs.environment }}"
+          if [ "$ENV" = "dev" ]; then
+            CLUSTER="${{ secrets.EKS_CLUSTER_NAME_DEV_TENANT_1 }}"
+          elif [ "$ENV" = "sandbox" ]; then
+            CLUSTER="${{ secrets.EKS_CLUSTER_NAME_SANDBOX_TENANT_1 }}"
+          elif [ "$ENV" = "production" ]; then
+            CLUSTER="${{ secrets.EKS_CLUSTER_NAME_PROD_TENANT_1 }}"
+          else
+            echo "::error::Unknown environment: $ENV"
+            exit 1
+          fi
+          aws eks update-kubeconfig --name "${CLUSTER}" --region ${{ env.AWS_REGION }}
+
+      - name: Auth GCP (tenant-2)
+        if: inputs.tenant == 'tenant-2'
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER_TENANT_2 }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL_TENANT_2 }}
+
+      - name: Auth GCP (tenant-3)
+        if: inputs.tenant == 'tenant-3'
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER_TENANT_3 }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL_TENANT_3 }}
+
+      - name: Set up gcloud (tenant-2 or tenant-3)
+        if: inputs.tenant == 'tenant-2' || inputs.tenant == 'tenant-3'
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: kubeconfig (tenant-2 GKE)
+        if: inputs.tenant == 'tenant-2'
+        run: |
+          ENV="${{ inputs.environment }}"
+          if [ "$ENV" = "dev" ]; then
+            CLUSTER="${{ secrets.GKE_CLUSTER_NAME_DEV_TENANT_2 }}"
+          elif [ "$ENV" = "sandbox" ]; then
+            CLUSTER="${{ secrets.GKE_CLUSTER_NAME_SANDBOX_TENANT_2 }}"
+          elif [ "$ENV" = "production" ]; then
+            CLUSTER="${{ secrets.GKE_CLUSTER_NAME_PROD_TENANT_2 }}"
+          else
+            echo "::error::Unknown environment: $ENV"
+            exit 1
+          fi
+          gcloud container clusters get-credentials "${CLUSTER}" --region ${{ secrets.GKE_REGION_TENANT_2 || 'us-central1' }}
+
+      - name: kubeconfig (tenant-3 GKE)
+        if: inputs.tenant == 'tenant-3'
+        run: |
+          ENV="${{ inputs.environment }}"
+          if [ "$ENV" = "dev" ]; then
+            CLUSTER="${{ secrets.GKE_CLUSTER_NAME_DEV_TENANT_3 }}"
+          elif [ "$ENV" = "sandbox" ]; then
+            CLUSTER="${{ secrets.GKE_CLUSTER_NAME_SANDBOX_TENANT_3 }}"
+          elif [ "$ENV" = "production" ]; then
+            CLUSTER="${{ secrets.GKE_CLUSTER_NAME_PROD_TENANT_3 }}"
+          else
+            echo "::error::Unknown environment: $ENV"
+            exit 1
+          fi
+          gcloud container clusters get-credentials "${CLUSTER}" --region ${{ secrets.GKE_REGION_TENANT_3 || 'europe-west1' }}
+
+      - name: Pre-rollback status
+        run: |
+          echo "Current state of ${{ env.DEPLOYMENT }} in ${{ env.NS }}:"
+          kubectl get deployment ${{ env.DEPLOYMENT }} -n ${{ env.NS }} -o wide
+          kubectl rollout history deployment/${{ env.DEPLOYMENT }} -n ${{ env.NS }}
+
+      - name: Rollback to previous revision
+        if: inputs.target_revision == ''
+        run: |
+          echo "Rolling back ${{ env.DEPLOYMENT }} to previous revision..."
+          kubectl rollout undo deployment/${{ env.DEPLOYMENT }} -n ${{ env.NS }}
+          kubectl rollout status deployment/${{ env.DEPLOYMENT }} -n ${{ env.NS }} --timeout=5m
+
+      - name: Rollback to specific tag
+        if: inputs.target_revision != ''
+        run: |
+          TAG="${{ inputs.target_revision }}"
+          TENANT="${{ inputs.tenant }}"
+          if [ "$TENANT" = "tenant-1" ]; then
+            REGISTRY="${{ secrets.ECR_REGISTRY_TENANT_1 }}"
+          elif [ "$TENANT" = "tenant-2" ]; then
+            REGISTRY="${{ secrets.GAR_REGISTRY_TENANT_2 }}"
+          else
+            REGISTRY="${{ secrets.GAR_REGISTRY_TENANT_3 }}"
+          fi
+          ENV="${{ inputs.environment }}"
+          SVC="${{ inputs.service }}"
+          if [ "$ENV" = "production" ]; then
+            IMG="${REGISTRY}/trunk-${SVC}:${TAG}"
+          else
+            IMG="${REGISTRY}/trunk-${SVC}-${ENV}-${TENANT}:${TAG}"
+          fi
+          echo "Setting ${{ env.DEPLOYMENT }} image to ${IMG}..."
+          kubectl set image deployment/${{ env.DEPLOYMENT }} ${{ inputs.service }}=${IMG} -n ${{ env.NS }}
+          kubectl rollout status deployment/${{ env.DEPLOYMENT }} -n ${{ env.NS }} --timeout=5m
+
+      - name: Post-rollback verification
+        run: |
+          echo "Post-rollback state:"
+          kubectl get deployment ${{ env.DEPLOYMENT }} -n ${{ env.NS }} -o wide
+          kubectl get pods -n ${{ env.NS }} -l app=trunk-${{ inputs.service }}
+
+      - name: Smoke test (with retries)
+        run: |
+          SVC="${{ inputs.service }}"
+
+          case "$SVC" in
+            *) SVC_PORT=4000 ;;
+          esac
+
+          case "$SVC" in
+            api)           HEALTH_PATH="/health"; EXPECTED_CODE="200" ;;
+            orders)        HEALTH_PATH="/orders/health"; EXPECTED_CODE="any" ;;
+            notifications) HEALTH_PATH="/notifications/health"; EXPECTED_CODE="any" ;;
+            payments)      HEALTH_PATH="/payments/health"; EXPECTED_CODE="any" ;;
+            *)             HEALTH_PATH="/health"; EXPECTED_CODE="any" ;;
+          esac
+
+          kubectl port-forward -n ${{ env.NS }} deployment/${{ env.DEPLOYMENT }} ${SVC_PORT}:${SVC_PORT} &
+          PF_PID=$!
+          PASSED=false
+          for i in 1 2 3 4 5; do
+            sleep 5
+            HTTP_CODE=$(curl -sf -o /dev/null -w "%{http_code}" http://localhost:${SVC_PORT}${HEALTH_PATH} 2>/dev/null || echo "000")
+            if [ "$HTTP_CODE" = "000" ]; then
+              echo "Attempt $i: connection refused — retrying..."
+              continue
+            fi
+            if [ "$EXPECTED_CODE" = "any" ] || [ "$HTTP_CODE" = "$EXPECTED_CODE" ]; then
+              echo "Post-rollback health check passed (HTTP ${HTTP_CODE}) on attempt $i"
+              PASSED=true
+              break
+            fi
+            echo "Attempt $i: HTTP $HTTP_CODE (expected ${EXPECTED_CODE}) — retrying..."
+          done
+          kill $PF_PID 2>/dev/null || true
+          if [ "$PASSED" = "false" ]; then
+            echo "::error::Post-rollback smoke test FAILED after 5 attempts. Manual investigation required."
+            exit 1
+          fi

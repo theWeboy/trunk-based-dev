@@ -1,0 +1,164 @@
+# Mirror Docker Hardened Images (DHI) base image from dhi.io to all three tenant registries:
+#   tenant-1: AWS ECR (us-east-1)
+#   tenant-2: GCP Artifact Registry (us-central1)
+#   tenant-3: GCP Artifact Registry (europe-west1)
+#
+# Run manually or weekly (Sunday 02:00 UTC). Uses regctl image copy
+# (manifest-level transfer, no rebuild). See regsync.yaml for config reference.
+#
+# Required secrets:
+#   DHI_REGISTRY_USERNAME, DHI_REGISTRY_PASSWORD (or DHI_REGISTRY_TOKEN)
+#   GH_ACTIONS_ROLE_ARN_TENANT_1, ECR_REGISTRY_TENANT_1
+#   GCP_WORKLOAD_IDENTITY_PROVIDER_TENANT_2, GCP_SERVICE_ACCOUNT_EMAIL_TENANT_2, GAR_REGISTRY_TENANT_2
+#   GCP_WORKLOAD_IDENTITY_PROVIDER_TENANT_3, GCP_SERVICE_ACCOUNT_EMAIL_TENANT_3, GAR_REGISTRY_TENANT_3
+#
+# Flow:
+#   dhi.io/node:22-slim  ──regctl copy──►  tenant-1 ECR
+#                         ──regctl copy──►  tenant-2 GAR
+#                         ──regctl copy──►  tenant-3 GAR
+#
+# Deploy workflows then use --base=<registry>/dhi-runtime-node:22-slim
+# in `encore build docker` so every service image inherits the hardened base.
+name: DHI Base Image Sync
+
+on:
+  workflow_dispatch: {}
+  schedule:
+    - cron: "0 2 * * 0"  # Weekly Sunday 02:00 UTC
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  DHI_IMAGE: "dhi.io/node:22-slim"
+
+jobs:
+  sync-tenant-1:
+    name: Mirror to ECR (tenant-1 / AWS)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install regctl
+        run: |
+          curl -sSL "https://github.com/regclient/regclient/releases/latest/download/regctl-linux-amd64" -o regctl
+          chmod +x regctl
+          sudo mv regctl /usr/local/bin/
+          regctl version
+          regctl version
+
+      - name: Login to DHI registry (dhi.io)
+        run: |
+          if [ -n "${{ secrets.DHI_REGISTRY_TOKEN }}" ]; then
+            echo "${{ secrets.DHI_REGISTRY_TOKEN }}" | regctl registry login dhi.io --user '' --pass-stdin
+          else
+            regctl registry login dhi.io --user "${{ secrets.DHI_REGISTRY_USERNAME }}" --pass "${{ secrets.DHI_REGISTRY_PASSWORD }}"
+          fi
+
+      - name: Configure AWS credentials (tenant-1)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.GH_ACTIONS_ROLE_ARN_TENANT_1 }}
+          aws-region: ${{ secrets.AWS_REGION_TENANT_1 || 'us-east-1' }}
+
+      - name: Login to ECR
+        run: |
+          aws ecr get-login-password --region ${{ secrets.AWS_REGION_TENANT_1 || 'us-east-1' }} | \
+          regctl registry login ${{ secrets.ECR_REGISTRY_TENANT_1 }} --user AWS --pass-stdin
+
+      - name: Copy DHI image to ECR (tenant-1)
+        run: |
+          ECR_TARGET="${{ secrets.ECR_REGISTRY_TENANT_1 }}/dhi-runtime-node:22-slim"
+          regctl image copy ${{ env.DHI_IMAGE }} "$ECR_TARGET"
+          echo "Mirrored dhi.io/node:22-slim → ECR (tenant-1)"
+
+  sync-tenant-2:
+    name: Mirror to Artifact Registry (tenant-2 / GCP us-central1)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install regctl
+        run: |
+          curl -sSL "https://github.com/regclient/regclient/releases/latest/download/regctl-linux-amd64" -o regctl
+          chmod +x regctl
+          sudo mv regctl /usr/local/bin/
+          regctl version
+
+      - name: Login to DHI registry (dhi.io)
+        run: |
+          if [ -n "${{ secrets.DHI_REGISTRY_TOKEN }}" ]; then
+            echo "${{ secrets.DHI_REGISTRY_TOKEN }}" | regctl registry login dhi.io --user '' --pass-stdin
+          else
+            regctl registry login dhi.io --user "${{ secrets.DHI_REGISTRY_USERNAME }}" --pass "${{ secrets.DHI_REGISTRY_PASSWORD }}"
+          fi
+
+      - name: Authenticate to GCP (tenant-2)
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER_TENANT_2 }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL_TENANT_2 }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker ${{ secrets.GAR_REGISTRY_TENANT_2 }} --quiet
+
+      - name: Copy DHI image to GAR (tenant-2)
+        run: |
+          GAR_TARGET="${{ secrets.GAR_REGISTRY_TENANT_2 }}/dhi-runtime-node:22-slim"
+          regctl image copy ${{ env.DHI_IMAGE }} "$GAR_TARGET"
+          echo "Mirrored dhi.io/node:22-slim → GAR (tenant-2)"
+
+  sync-tenant-3:
+    name: Mirror to Artifact Registry (tenant-3 / GCP europe-west1)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install regctl
+        run: |
+          curl -sSL "https://github.com/regclient/regclient/releases/latest/download/regctl-linux-amd64" -o regctl
+          chmod +x regctl
+          sudo mv regctl /usr/local/bin/
+
+      - name: Login to DHI registry (dhi.io)
+        run: |
+          if [ -n "${{ secrets.DHI_REGISTRY_TOKEN }}" ]; then
+            echo "${{ secrets.DHI_REGISTRY_TOKEN }}" | regctl registry login dhi.io --user '' --pass-stdin
+          else
+            regctl registry login dhi.io --user "${{ secrets.DHI_REGISTRY_USERNAME }}" --pass "${{ secrets.DHI_REGISTRY_PASSWORD }}"
+          fi
+
+      - name: Authenticate to GCP (tenant-3)
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER_TENANT_3 }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL_TENANT_3 }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker ${{ secrets.GAR_REGISTRY_TENANT_3 }} --quiet
+
+      - name: Copy DHI image to GAR (tenant-3)
+        run: |
+          GAR_TARGET="${{ secrets.GAR_REGISTRY_TENANT_3 }}/dhi-runtime-node:22-slim"
+          regctl image copy ${{ env.DHI_IMAGE }} "$GAR_TARGET"
+          echo "Mirrored dhi.io/node:22-slim → GAR (tenant-3)"
+
+  verify:
+    name: Verify sync
+    needs: [sync-tenant-1, sync-tenant-2, sync-tenant-3]
+    runs-on: ubuntu-24.04
+    steps:
+      - run: |
+          echo "DHI base image (Docker Hardened Images) dhi.io/node:22-slim synced to:"
+          echo "  tenant-1 (ECR, AWS us-east-1):    <ECR_REGISTRY_TENANT_1>/dhi-runtime-node:22-slim"
+          echo "  tenant-2 (GAR, GCP us-central1):  <GAR_REGISTRY_TENANT_2>/dhi-runtime-node:22-slim"
+          echo "  tenant-3 (GAR, GCP europe-west1): <GAR_REGISTRY_TENANT_3>/dhi-runtime-node:22-slim"
+          echo ""
+          echo "Deploy workflows use: encore build docker --base=<registry>/dhi-runtime-node:22-slim"

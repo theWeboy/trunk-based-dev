@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: trunk-production-tenant-3
+  labels:
+    project: trunk
+    tenant: tenant-3
+    environment: production
+    cloud: gcp

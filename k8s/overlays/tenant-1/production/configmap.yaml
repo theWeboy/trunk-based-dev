@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: trunk-config
+  namespace: trunk-production-tenant-1
+data:
+  TENANT: "tenant-1"
+  NODE_ENV: "production"
+  REGION: "us-east-1"
+  CLOUD: "aws"
+  LOG_LEVEL: "warn"

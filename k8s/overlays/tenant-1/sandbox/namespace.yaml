@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: trunk-sandbox-tenant-1
+  labels:
+    project: trunk
+    tenant: tenant-1
+    environment: sandbox
+    cloud: aws

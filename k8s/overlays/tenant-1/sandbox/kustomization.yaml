@@ -1,0 +1,33 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: trunk-sandbox-tenant-1
+resources:
+  - namespace.yaml
+  - configmap.yaml
+  - ../../../base/api
+  - ../../../base/orders
+  - ../../../base/notifications
+  - ../../../base/payments
+  - pdb.yaml
+commonLabels:
+  tenant: tenant-1
+  environment: sandbox
+  cloud: aws
+patches:
+  - patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 2
+    target:
+      kind: Deployment
+# Placeholder tags — overwritten by `kustomize edit set image` in deploy-sandbox.yml before kubectl apply.
+# Built services receive the RC tag; unchanged services preserve the currently-deployed image.
+images:
+  - name: trunk-api:latest
+    newTag: set-by-deploy-workflow
+  - name: trunk-notifications:latest
+    newTag: set-by-deploy-workflow
+  - name: trunk-orders:latest
+    newTag: set-by-deploy-workflow
+  - name: trunk-payments:latest
+    newTag: set-by-deploy-workflow

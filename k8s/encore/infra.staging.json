@@ -1,0 +1,14 @@
+{
+  "metadata": {
+    "app_id": "trunk",
+    "env_name": "staging",
+    "env_type": "production",
+    "cloud": "aws",
+    "base_url": "https://api-staging.change-me.com"
+  },
+  "secrets": {
+    "NODE_ENV": { "$env": "NODE_ENV" },
+    "REGION": { "$env": "REGION" },
+    "TENANT": { "$env": "TENANT" }
+  }
+}

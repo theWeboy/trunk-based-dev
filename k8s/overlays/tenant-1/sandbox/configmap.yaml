@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: trunk-config
+  namespace: trunk-sandbox-tenant-1
+data:
+  TENANT: "tenant-1"
+  NODE_ENV: "staging"
+  REGION: "us-east-1"
+  CLOUD: "aws"
+  LOG_LEVEL: "info"

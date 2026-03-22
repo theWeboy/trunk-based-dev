@@ -1,0 +1,178 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: trunk-api
+  labels:
+    app: trunk-api
+    project: trunk
+spec:
+  replicas: 1
+  revisionHistoryLimit: 10
+  selector:
+    matchLabels:
+      app: trunk-api
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app: trunk-api
+        project: trunk
+    spec:
+      serviceAccountName: trunk-service-account
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 2000
+        fsGroup: 2000
+      initContainers:
+        - name: database-check
+          image: busybox:1.36
+          resources:
+            requests:
+              cpu: "10m"
+              memory: "16Mi"
+            limits:
+              cpu: "100m"
+              memory: "64Mi"
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+          command:
+            - sh
+            - -c
+            - |
+              if [ -z "$DATABASE_URL" ]; then
+                echo "DATABASE_URL not set — skipping database check"
+                exit 0
+              fi
+              STRIPPED=$(echo "$DATABASE_URL" | sed 's|.*@||')
+              DB_HOST=$(echo "$STRIPPED" | cut -d: -f1)
+              DB_PORT=$(echo "$STRIPPED" | cut -d: -f2 | cut -d'/' -f1)
+              DB_PORT=${DB_PORT:-5432}
+              exec /wait-scripts/wait-for-tcp.sh \
+                Database \
+                "$DB_HOST" \
+                "$DB_PORT" \
+                "check DATABASE_URL and network" \
+                "120" \
+                "2" \
+                "3"
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: trunk-db-secret
+                  key: DATABASE_URL
+                  optional: true
+          volumeMounts:
+            - name: init-scripts
+              mountPath: /wait-scripts
+              readOnly: true
+
+        - name: redis-check
+          image: busybox:1.36
+          resources:
+            requests:
+              cpu: "10m"
+              memory: "16Mi"
+            limits:
+              cpu: "100m"
+              memory: "64Mi"
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+          command:
+            - sh
+            - -c
+            - |
+              if [ -z "$REDIS_URL" ]; then
+                echo "REDIS_URL not set — skipping Redis check"
+                exit 0
+              fi
+              REDIS_HOST=$(echo "$REDIS_URL" | sed 's|redis://||' | cut -d: -f1)
+              REDIS_PORT=$(echo "$REDIS_URL" | sed 's|redis://||' | cut -d: -f2)
+              REDIS_PORT=${REDIS_PORT:-6379}
+              exec /wait-scripts/wait-for-tcp.sh \
+                Redis \
+                "$REDIS_HOST" \
+                "$REDIS_PORT" \
+                "check REDIS_URL and network" \
+                "60" \
+                "2" \
+                "3"
+          env:
+            - name: REDIS_URL
+              valueFrom:
+                secretKeyRef:
+                  name: trunk-redis-secret
+                  key: REDIS_URL
+                  optional: true
+          volumeMounts:
+            - name: init-scripts
+              mountPath: /wait-scripts
+              readOnly: true
+      containers:
+        - name: api
+          image: trunk-api:latest
+          imagePullPolicy: Always
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+          ports:
+            - name: http
+              containerPort: 4000
+          envFrom:
+            - configMapRef:
+                name: trunk-config
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: trunk-db-secret
+                  key: DATABASE_URL
+                  optional: true
+            - name: REDIS_URL
+              valueFrom:
+                secretKeyRef:
+                  name: trunk-redis-secret
+                  key: REDIS_URL
+                  optional: true
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+          startupProbe:
+            httpGet:
+              path: /health
+              port: 4000
+            periodSeconds: 5
+            failureThreshold: 60  # 60 × 5s = 5 minutes max startup window
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 4000
+            periodSeconds: 5
+            failureThreshold: 2
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 4000
+            periodSeconds: 15
+            failureThreshold: 3
+      volumes:
+        - name: init-scripts
+          configMap:
+            name: trunk-api-init-scripts
+            defaultMode: 0555
+        - name: tmp
+          emptyDir: {}
+      terminationGracePeriodSeconds: 30
