@@ -98,9 +98,9 @@ Do this first, because both AWS OIDC and GCP Workload Identity need the exact re
    - Require a pull request before merging.
    - Require at least 1 approval.
    - Require branches to be up to date before merging.
-   - Require status checks:
-     - `validate`
-     - `E2E Tests`
+   - Require status checks (see below — names must exist before GitHub shows them in the picker):
+     - **CI / `validate`** — the job is named `validate` in workflow `CI` (`.github/workflows/ci.yml`). The UI often shows this as **`validate`**, **`CI`**, or **`validate / CI`** depending on GitHub’s branch-protection UI version; pick the one that matches the green check on a recent PR or `main` run.
+     - **`E2E Tests`** — this is a **commit status** set by **E2E Gate** (`.github/workflows/e2e-gate.yml`), not a workflow job name. It only appears after **at least one pull request** to `main` has run (the gate sets `E2E Tests` to `pending` on PR open/sync). If the check is missing: open any PR targeting `main`, wait for **E2E Gate** to finish, then refresh branch protection or the status-check search box.
 5. If the repo lives in an organization with restricted actions, allow the marketplace actions used in `.github/workflows`.
 6. If you want to test `/run-e2e` from a second user, add that user as a collaborator. The workflow only reacts to comments from `MEMBER`, `OWNER`, or `COLLABORATOR`.
 
