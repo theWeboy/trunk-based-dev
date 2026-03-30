@@ -115,92 +115,123 @@ Do this first, because both AWS OIDC and GCP Workload Identity need the exact re
 
 ### 0.3 GitHub Environments
 
-Create the following environments in **Settings -> Environments**.
+Create the following **9 environments** in **Settings → Environments → New environment**.
 
 For a personal repo, it is fine to set yourself as the required reviewer on production environments.
+Dev and sandbox environments need no reviewer — they deploy automatically or on-demand.
 
+| Environment name      | Required reviewer | Purpose |
+|-----------------------|-------------------|---------|
+| `dev-tenant-1`        | none              | auto-deploys on every push to `main` |
+| `dev-tenant-2`        | none              | auto-deploys on every push to `main` |
+| `dev-tenant-3`        | none              | auto-deploys on every push to `main` |
+| `sandbox-tenant-1`    | none              | manual promotion from dev |
+| `sandbox-tenant-2`    | none              | manual promotion from dev |
+| `sandbox-tenant-3`    | none              | manual promotion from dev |
+| `production-tenant-1` | **yourself**      | gated release deploys |
+| `production-tenant-2` | **yourself**      | gated release deploys |
+| `production-tenant-3` | **yourself**      | gated release deploys |
 
-| Environment name      | Required reviewer |
-| --------------------- | ----------------- |
-| `sandbox-tenant-1`    | optional          |
-| `sandbox-tenant-2`    | optional          |
-| `sandbox-tenant-3`    | optional          |
-| `production-tenant-1` | required          |
-| `production-tenant-2` | required          |
-| `production-tenant-3` | required          |
+> **Why 9 environments?** Every deploy job (including dev) now declares `environment: <tier>-<tenant>`.
+> This gives per-environment secret scoping — cluster names live as environment secrets rather than
+> repo secrets — plus deployment tracking on the repo homepage and the approval gate on production.
 
+**Deployment branches and tags** — configure for each environment after creating it:
 
-**Deployment branches and tags** (do this for each `sandbox-tenant-*` and `production-tenant-*` environment):
+1. Open **Settings → Environments**, click the environment name.
+2. Under **Deployment branches and tags**, set the dropdown to **Selected branches and tags**.
+3. Add rules based on the tier:
 
-1. Open **Settings → Environments**, click the environment name (e.g. `sandbox-tenant-1`).
-2. Find **Deployment branches and tags** (the section that limits which branches and tags can deploy to this environment).
-3. Set the dropdown on the right to **Selected branches and tags** (not “All branches”).
-4. Click **Add deployment branch or tag rule** and add a **branch** rule for `**main`** (matches the default `ref` in the deploy workflows and typical trunk-based runs).
-5. Click **Add deployment branch or tag rule** again and add a **tag** rule. Use pattern `**v*`** so semver-style tags are allowed (for example release tags `v0.1.0` and sandbox RC tags like `v0.1.1-rc.<run_number>` from the workflows). Adjust the pattern only if your repo uses a different tag naming scheme.
-6. After saving, the summary should show **1 branch and 1 tag** allowed (e.g. `main` plus your tag pattern), matching the GitHub UI.
-7. Repeat steps 1–6 for every sandbox and production environment in the table above.
+| Tier | Branch rule | Tag rule | Reason |
+|------|-------------|----------|--------|
+| `dev-tenant-*` | `main` | *(none needed)* | Dev deploys only from `main` on push |
+| `sandbox-tenant-*` | `main` | `v*` | Sandbox is promoted manually from `main` or an RC tag |
+| `production-tenant-*` | `main` | `v*` | Production deploys from release tags |
 
-If you later run manual deploys from other long-lived branches or tags (for example release branches or one-off tags), add matching branch or tag rules here; otherwise deployments from disallowed refs will be blocked at the environment gate.
+4. Repeat for all 9 environments.
+
+If you later run manual deploys from other long-lived branches or additional tag patterns, add matching rules here; otherwise deployments from disallowed refs will be blocked at the environment gate.
 
 ### 0.4 GitHub Secrets
 
-Add these secrets at **Settings -> Secrets and variables -> Actions -> Repository secrets** after you create the cloud resources below:
+Secrets are split into two scopes:
+
+- **Repository secrets** — shared across all tenants and environments (cloud auth, registries, tokens).
+  Add at **Settings → Secrets and variables → Actions → Repository secrets → New repository secret**.
+- **Environment secrets** — scoped to a specific `<tier>-<tenant>` environment (cluster names).
+  Add at **Settings → Environments → [environment name] → Add secret**.
+
+---
+
+#### Repository secrets
 
 ```text
 # DHI (Docker Hardened Images) registry
-# Use either the token or username/password pair, depending on what DHI gave you.
 DHI_REGISTRY_TOKEN=<your-dhi-token>
 
 # tenant-1 (AWS us-east-1)
 GH_ACTIONS_ROLE_ARN_TENANT_1=arn:aws:iam::<ACCOUNT_ID>:role/github-actions-role
 ECR_REGISTRY_TENANT_1=<account_id>.dkr.ecr.us-east-1.amazonaws.com
 AWS_REGION_TENANT_1=us-east-1
-EKS_CLUSTER_NAME_DEV_TENANT_1=trunk-dev
-EKS_CLUSTER_NAME_SANDBOX_TENANT_1=trunk-sandbox
-EKS_CLUSTER_NAME_PROD_TENANT_1=trunk-prod
 
 # tenant-2 (GCP us-central1)
 GCP_WORKLOAD_IDENTITY_PROVIDER_TENANT_2=projects/<PROJECT_NUMBER>/locations/global/workloadIdentityPools/<POOL>/providers/<PROVIDER>
-GCP_SERVICE_ACCOUNT_EMAIL_TENANT_2=github-actions@"${PROJECT_ID}".iam.gserviceaccount.com
-GAR_REGISTRY_TENANT_2=us-central1-docker.pkg.dev/"${PROJECT_ID}"/trunk
-GKE_CLUSTER_NAME_DEV_TENANT_2=trunk-dev
-GKE_CLUSTER_NAME_SANDBOX_TENANT_2=trunk-sandbox
-GKE_CLUSTER_NAME_PROD_TENANT_2=trunk-prod
+GCP_SERVICE_ACCOUNT_EMAIL_TENANT_2=github-actions@<PROJECT_ID>.iam.gserviceaccount.com
+GAR_REGISTRY_TENANT_2=us-central1-docker.pkg.dev/<PROJECT_ID>/trunk
 GKE_REGION_TENANT_2=us-central1
 
 # tenant-3 (GCP europe-west1)
 GCP_WORKLOAD_IDENTITY_PROVIDER_TENANT_3=projects/<PROJECT_NUMBER>/locations/global/workloadIdentityPools/<POOL>/providers/<PROVIDER>
-GCP_SERVICE_ACCOUNT_EMAIL_TENANT_3=github-actions@"${PROJECT_ID}".iam.gserviceaccount.com
-GAR_REGISTRY_TENANT_3=europe-west1-docker.pkg.dev/"${PROJECT_ID}"/trunk
-GKE_CLUSTER_NAME_DEV_TENANT_3=trunk-dev
-GKE_CLUSTER_NAME_SANDBOX_TENANT_3=trunk-sandbox
-GKE_CLUSTER_NAME_PROD_TENANT_3=trunk-prod
+GCP_SERVICE_ACCOUNT_EMAIL_TENANT_3=github-actions@<PROJECT_ID>.iam.gserviceaccount.com
+GAR_REGISTRY_TENANT_3=europe-west1-docker.pkg.dev/<PROJECT_ID>/trunk
 GKE_REGION_TENANT_3=europe-west1
 
 # Optional: SonarCloud
 SONAR_TOKEN=<sonar-token>
 ```
 
-**How to obtain these values**
+These secrets are accessed by `build-and-push` and other jobs that run without an environment context, so they must live at repo scope.
 
-Add each secret in **Settings → Secrets and variables → Actions → Repository secrets** → **New repository secret**. The **Name** must match the left-hand side exactly (case-sensitive). Values below are what you paste into **Secret**.
+---
 
-1. `**DHI_REGISTRY_TOKEN`** (or `**DHI_REGISTRY_USERNAME**` / `**DHI_REGISTRY_PASSWORD**`): Obtain from your [Docker Hardened Images](https://dhi.io) (dhi.io) account — the token or user/password pair they issue for registry login. The `[dhi-sync` workflow](../.github/workflows/dhi-sync.yml) uses the token if set; otherwise it uses username and password. You only need one auth method.
-2. **Tenant-1 (AWS)** — fill these after you complete **§0.5** (OIDC role, ECR, EKS):
-  - `**GH_ACTIONS_ROLE_ARN_TENANT_1`**: In **IAM → Roles → `github-actions-role`**, copy **ARN**. Or: `aws iam get-role --role-name github-actions-role --query 'Role.Arn' --output text` (use your role name if different).
-  - `**ECR_REGISTRY_TENANT_1`**: `<AWS_ACCOUNT_ID>.dkr.ecr.<region>.amazonaws.com` with no path. Account ID: **Billing** in the console, or `aws sts get-caller-identity --query Account --output text`. Region must match ECR (e.g. `us-east-1`).
-  - `**AWS_REGION_TENANT_1`**: The same region as ECR and EKS (e.g. `us-east-1`).
-  - `**EKS_CLUSTER_NAME_DEV_TENANT_1**`, `**EKS_CLUSTER_NAME_SANDBOX_TENANT_1**`, `**EKS_CLUSTER_NAME_PROD_TENANT_1**`: Exact names from **EKS → Clusters** or `aws eks list-clusters --region <region>`. Defaults in this doc are `trunk-dev`, `trunk-sandbox`, `trunk-prod` — use your real names if you chose others.
-3. **Tenant-2 (GCP)** — fill these after you complete **§0.6** for the tenant-2 project (service account, WIF pool, Artifact Registry `trunk`, GKE):
-  - `**GCP_WORKLOAD_IDENTITY_PROVIDER_TENANT_2`**: Full provider resource name. In **IAM → Workload Identity Federation**, open your pool and provider, or run (adjust pool/provider IDs to match §0.6):
-     The value looks like `projects/<PROJECT_NUMBER>/locations/global/workloadIdentityPools/<POOL>/providers/<PROVIDER>`.
-  - `**GCP_SERVICE_ACCOUNT_EMAIL_TENANT_2`**: The GitHub Actions SA email, e.g. `github-actions@"${PROJECT_ID}".iam.gserviceaccount.com` — from **IAM → Service accounts** or the `gcloud iam service-accounts create` output in §0.6.
-  - `**GAR_REGISTRY_TENANT_2`**: Host for `gcloud auth configure-docker` — `<region>-docker.pkg.dev/"${PROJECT_ID}"/trunk` with **no** image name or tag (region is the Artifact Registry location, e.g. `us-central1`).
-  - `**GKE_CLUSTER_NAME_DEV_TENANT_2`**, `**GKE_CLUSTER_NAME_SANDBOX_TENANT_2**`, `**GKE_CLUSTER_NAME_PROD_TENANT_2**`, `**GKE_REGION_TENANT_2**`: Must match **Kubernetes Engine → Clusters** (or `gcloud container clusters list`). Defaults here are `trunk-dev`, `trunk-sandbox`, `trunk-prod`, and `us-central1`.
-4. **Tenant-3 (GCP)** — same as tenant-2, using the tenant-3 project and `**_TENANT_3`** secret names. Defaults: `europe-west1` for `**GKE_REGION_TENANT_3**` and the same cluster name pattern.
-5. `**SONAR_TOKEN**` (optional): In [SonarCloud](https://sonarcloud.io), **My Account → Security → Generate Tokens**, create a token with scope appropriate for analysis. In **My Account → Organizations**, ensure your GitHub repo is bound or imported so the token can see the project. If you skip this secret, CI skips Sonar when the token is empty.
+#### Environment secrets
 
-Important GitHub note: keep these as **repository secrets**, not environment secrets, because the workflows reference `secrets.<NAME>` at repository scope.
+Each cluster-name secret belongs only to its specific `<tier>-<tenant>` environment. This follows the principle of least privilege: a compromised dev job cannot read production cluster names.
+
+| Environment | Secret name | Example value |
+|-------------|-------------|---------------|
+| `dev-tenant-1` | `EKS_CLUSTER_NAME_DEV_TENANT_1` | `trunk-dev` |
+| `sandbox-tenant-1` | `EKS_CLUSTER_NAME_SANDBOX_TENANT_1` | `trunk-sandbox` |
+| `production-tenant-1` | `EKS_CLUSTER_NAME_PROD_TENANT_1` | `trunk-prod` |
+| `dev-tenant-2` | `GKE_CLUSTER_NAME_DEV_TENANT_2` | `trunk-dev` |
+| `sandbox-tenant-2` | `GKE_CLUSTER_NAME_SANDBOX_TENANT_2` | `trunk-sandbox` |
+| `production-tenant-2` | `GKE_CLUSTER_NAME_PROD_TENANT_2` | `trunk-prod` |
+| `dev-tenant-3` | `GKE_CLUSTER_NAME_DEV_TENANT_3` | `trunk-dev` |
+| `sandbox-tenant-3` | `GKE_CLUSTER_NAME_SANDBOX_TENANT_3` | `trunk-sandbox` |
+| `production-tenant-3` | `GKE_CLUSTER_NAME_PROD_TENANT_3` | `trunk-prod` |
+
+To add each one: **Settings → Environments → [environment name] → Add secret**, enter the secret name and value, click **Add secret**.
+
+---
+
+**How to obtain each value**
+
+1. `DHI_REGISTRY_TOKEN`: Obtain from your [Docker Hardened Images](https://dhi.io) account — the token they issue for registry login.
+2. **Tenant-1 (AWS)** — fill after completing **§0.5** (OIDC role, ECR, EKS):
+   - `GH_ACTIONS_ROLE_ARN_TENANT_1`: **IAM → Roles → `github-actions-role` → ARN**, or:
+     `aws iam get-role --role-name github-actions-role --query 'Role.Arn' --output text`
+   - `ECR_REGISTRY_TENANT_1`: `<AWS_ACCOUNT_ID>.dkr.ecr.<region>.amazonaws.com` (no path).
+     Account ID: `aws sts get-caller-identity --query Account --output text`
+   - `AWS_REGION_TENANT_1`: Region of your ECR and EKS (e.g. `us-east-1`).
+   - Cluster name secrets (`EKS_CLUSTER_NAME_*_TENANT_1`): Exact names from `aws eks list-clusters --region <region>`. Defaults: `trunk-dev`, `trunk-sandbox`, `trunk-prod`.
+3. **Tenant-2 (GCP)** — fill after completing **§0.6** (service account, WIF pool, Artifact Registry, GKE):
+   - `GCP_WORKLOAD_IDENTITY_PROVIDER_TENANT_2`: Full provider resource name — `projects/<PROJECT_NUMBER>/locations/global/workloadIdentityPools/<POOL>/providers/<PROVIDER>`. Get it from **IAM → Workload Identity Federation**.
+   - `GCP_SERVICE_ACCOUNT_EMAIL_TENANT_2`: SA email, e.g. `github-actions@<PROJECT_ID>.iam.gserviceaccount.com`.
+   - `GAR_REGISTRY_TENANT_2`: `<region>-docker.pkg.dev/<PROJECT_ID>/trunk` (no image name or tag).
+   - `GKE_REGION_TENANT_2`: Region or zone of your GKE clusters (e.g. `us-central1` or `us-central1-a`).
+   - Cluster name secrets (`GKE_CLUSTER_NAME_*_TENANT_2`): from `gcloud container clusters list`.
+4. **Tenant-3 (GCP)** — same as tenant-2, using the tenant-3 project and `_TENANT_3` secret names. Default region: `europe-west1` (or `europe-west1-b` for zonal clusters).
+5. `SONAR_TOKEN` (optional): **SonarCloud → My Account → Security → Generate Token**. If absent, CI skips analysis.
 
 ### 0.5 AWS Setup From Zero (tenant-1)
 
