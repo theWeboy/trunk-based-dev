@@ -4,6 +4,7 @@ namespace: trunk-dev-tenant-2
 resources:
   - namespace.yaml
   - configmap.yaml
+  - ../../../base/rbac
   - ../../../base/api
   - ../../../base/orders
   - ../../../base/notifications

@@ -1,0 +1,228 @@
+# One-time cluster bootstrap. Run this ONCE per cluster before the first real deploy.
+# Creates the namespace, ConfigMap, ServiceAccount, and placeholder DB/Redis secrets on each
+# target cluster. Safe to re-run — all steps are idempotent (uses --dry-run=client | kubectl apply).
+#
+# DB/Redis secret values are intentionally NOT accepted as workflow inputs — workflow_dispatch
+# string inputs are stored in plain text in GitHub's run history and visible to anyone with
+# repo read access. Set real connection strings locally AFTER bootstrap:
+#
+#   kubectl create secret generic trunk-db-secret \
+#     --from-literal=DATABASE_URL='postgres://user:pass@host:5432/db' \
+#     -n <namespace> --dry-run=client -o yaml | kubectl apply -f -
+#
+#   kubectl create secret generic trunk-redis-secret \
+#     --from-literal=REDIS_URL='redis://host:6379' \
+#     -n <namespace> --dry-run=client -o yaml | kubectl apply -f -
+#
+# Until real values are set the init containers skip their connectivity checks (empty URL = skip),
+# so pods still start and the cluster is usable for image/deploy testing.
+#
+# What this does NOT do:
+#   - Build or push images
+#   - Create Deployments or Services (the deploy workflows handle that)
+name: Bootstrap Clusters
+
+on:
+  workflow_dispatch:
+    inputs:
+      tenant:
+        description: "Tenant to bootstrap"
+        required: true
+        default: "all"
+        type: choice
+        options: [all, tenant-1, tenant-2, tenant-3]
+      environment:
+        description: "Environment to bootstrap"
+        required: true
+        default: "all"
+        type: choice
+        options: [all, dev, sandbox, production]
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: us-east-1
+
+jobs:
+  # ── Build the list of (tenant, env, namespace, cluster-secret, region) tuples ──
+  plan:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.build.outputs.matrix }}
+    steps:
+      - id: build
+        run: |
+          python3 - <<'PYEOF'
+          import json, os
+
+          TENANT_IN = "${{ inputs.tenant }}"
+          ENV_IN    = "${{ inputs.environment }}"
+
+          tenants = ["tenant-1", "tenant-2", "tenant-3"] if TENANT_IN == "all" else [TENANT_IN]
+          envs    = ["dev", "sandbox", "production"]     if ENV_IN   == "all" else [ENV_IN]
+
+          # env-label → namespace-segment mapping
+          NS_SEG = {"dev": "dev", "sandbox": "sandbox", "production": "production"}
+
+          # Cluster secret names per tenant/env (mirrors deploy workflows)
+          CLUSTER_SECRET = {
+            "tenant-1": {
+              "dev":        "EKS_CLUSTER_NAME_DEV_TENANT_1",
+              "sandbox":    "EKS_CLUSTER_NAME_SANDBOX_TENANT_1",
+              "production": "EKS_CLUSTER_NAME_PROD_TENANT_1",
+            },
+            "tenant-2": {
+              "dev":        "GKE_CLUSTER_NAME_DEV_TENANT_2",
+              "sandbox":    "GKE_CLUSTER_NAME_SANDBOX_TENANT_2",
+              "production": "GKE_CLUSTER_NAME_PROD_TENANT_2",
+            },
+            "tenant-3": {
+              "dev":        "GKE_CLUSTER_NAME_DEV_TENANT_3",
+              "sandbox":    "GKE_CLUSTER_NAME_SANDBOX_TENANT_3",
+              "production": "GKE_CLUSTER_NAME_PROD_TENANT_3",
+            },
+          }
+
+          CLOUD = {"tenant-1": "aws", "tenant-2": "gcp", "tenant-3": "gcp"}
+
+          matrix = []
+          for t in tenants:
+            for e in envs:
+              ns = f"trunk-{NS_SEG[e]}-{t}"
+              matrix.append({
+                "tenant":         t,
+                "env":            e,
+                "cloud":          CLOUD[t],
+                "namespace":      ns,
+                "cluster_secret": CLUSTER_SECRET[t][e],
+              })
+
+          with open(os.environ["GITHUB_OUTPUT"], "a") as fh:
+            fh.write(f"matrix={json.dumps(matrix)}\n")
+          print(json.dumps(matrix, indent=2))
+          PYEOF
+
+  # ── Bootstrap each (tenant, env) pair ────────────────────────────────────────
+  bootstrap:
+    needs: plan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    strategy:
+      matrix:
+        include: ${{ fromJson(needs.plan.outputs.matrix) }}
+      fail-fast: false
+
+    env:
+      NS: ${{ matrix.namespace }}
+      TENANT: ${{ matrix.tenant }}
+      ENV: ${{ matrix.env }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # ── AWS / EKS (tenant-1) ────────────────────────────────────────────────
+      - name: Configure AWS credentials (tenant-1)
+        if: matrix.tenant == 'tenant-1'
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.GH_ACTIONS_ROLE_ARN_TENANT_1 }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Get EKS kubeconfig (tenant-1)
+        if: matrix.tenant == 'tenant-1'
+        run: |
+          aws eks update-kubeconfig \
+            --name "${{ secrets[matrix.cluster_secret] }}" \
+            --region "${{ env.AWS_REGION }}"
+
+      # ── GCP / GKE (tenant-2) ────────────────────────────────────────────────
+      - name: Authenticate to GCP (tenant-2)
+        if: matrix.tenant == 'tenant-2'
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER_TENANT_2 }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL_TENANT_2 }}
+
+      - name: Get GKE kubeconfig (tenant-2)
+        if: matrix.tenant == 'tenant-2'
+        uses: google-github-actions/setup-gcloud@v2
+      - if: matrix.tenant == 'tenant-2'
+        run: |
+          gcloud container clusters get-credentials \
+            "${{ secrets[matrix.cluster_secret] }}" \
+            --zone "${{ secrets.GKE_REGION_TENANT_2 }}"
+
+      # ── GCP / GKE (tenant-3) ────────────────────────────────────────────────
+      - name: Authenticate to GCP (tenant-3)
+        if: matrix.tenant == 'tenant-3'
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER_TENANT_3 }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL_TENANT_3 }}
+
+      - name: Get GKE kubeconfig (tenant-3)
+        if: matrix.tenant == 'tenant-3'
+        uses: google-github-actions/setup-gcloud@v2
+      - if: matrix.tenant == 'tenant-3'
+        run: |
+          gcloud container clusters get-credentials \
+            "${{ secrets[matrix.cluster_secret] }}" \
+            --zone "${{ secrets.GKE_REGION_TENANT_3 }}"
+
+      # ── Apply structural resources (namespace, ConfigMap, ServiceAccount) ───
+      - name: Apply namespace
+        run: |
+          kubectl apply -f "k8s/overlays/${TENANT}/${ENV}/namespace.yaml"
+
+      - name: Apply ConfigMap
+        run: |
+          kubectl apply -f "k8s/overlays/${TENANT}/${ENV}/configmap.yaml" \
+            --namespace="${NS}"
+
+      - name: Apply ServiceAccount
+        run: |
+          kubectl apply -f "k8s/base/rbac/serviceaccount.yaml" \
+            --namespace="${NS}"
+
+      # ── Create placeholder secrets ───────────────────────────────────────────
+      # Secrets are created with empty values so pods can start (init containers
+      # skip DB/Redis checks when the env var is empty). Set real values locally
+      # with kubectl after bootstrap — see the comment at the top of this file.
+      - name: Create trunk-db-secret (placeholder)
+        run: |
+          kubectl create secret generic trunk-db-secret \
+            --from-literal=DATABASE_URL="" \
+            --namespace="${NS}" \
+            --dry-run=client -o yaml | kubectl apply -f -
+          echo "::notice::trunk-db-secret created with empty DATABASE_URL. Update with a real value via kubectl when ready."
+
+      - name: Create trunk-redis-secret (placeholder)
+        run: |
+          kubectl create secret generic trunk-redis-secret \
+            --from-literal=REDIS_URL="" \
+            --namespace="${NS}" \
+            --dry-run=client -o yaml | kubectl apply -f -
+          echo "::notice::trunk-redis-secret created with empty REDIS_URL. Update with a real value via kubectl when ready."
+
+      # ── Verify ───────────────────────────────────────────────────────────────
+      - name: Verify bootstrap objects
+        run: |
+          echo "=== Namespace ==="
+          kubectl get namespace "${NS}"
+
+          echo "=== ServiceAccount ==="
+          kubectl get serviceaccount trunk-service-account -n "${NS}"
+
+          echo "=== ConfigMap ==="
+          kubectl get configmap trunk-config -n "${NS}"
+
+          echo "=== Secrets ==="
+          kubectl get secret trunk-db-secret    -n "${NS}" -o jsonpath='{.metadata.name}' && echo " ✓"
+          kubectl get secret trunk-redis-secret -n "${NS}" -o jsonpath='{.metadata.name}' && echo " ✓"
+
+          echo ""
+          echo "✅ Bootstrap complete for ${NS} (${TENANT} / ${ENV})"
+          echo "   Cluster is ready for first deploy via deploy-dev / deploy-sandbox / deploy-production workflows."
