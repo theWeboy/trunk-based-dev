@@ -230,6 +230,7 @@ jobs:
     needs: [setup-matrix, build-and-push, detect-changes]
     runs-on: ubuntu-24.04
     timeout-minutes: 20
+    environment: dev-${{ matrix.tenant }}
     strategy:
       matrix: ${{ fromJson(needs.setup-matrix.outputs.matrix) }}
       fail-fast: false

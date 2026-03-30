@@ -110,6 +110,7 @@ jobs:
     needs: plan
     runs-on: ubuntu-24.04
     timeout-minutes: 10
+    environment: ${{ matrix.env }}-${{ matrix.tenant }}
     strategy:
       matrix:
         include: ${{ fromJson(needs.plan.outputs.matrix) }}
