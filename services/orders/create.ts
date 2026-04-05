@@ -1,4 +1,4 @@
-import { api, APIError } from "encore.dev/api";
+import { APIError, api } from "encore.dev/api";
 import { getAdapter } from "../../shared/adapters/factory/adapter.factory.js";
 import type { CreateOrderRequest, CreateOrderResponse, Order } from "./types.js";
 
@@ -6,7 +6,10 @@ export const createOrder = api<CreateOrderRequest, CreateOrderResponse>(
   { method: "POST", path: "/orders", expose: true },
   async (req: CreateOrderRequest): Promise<CreateOrderResponse> => {
     const adapter = getAdapter();
-    const validation = adapter.validateOrder({ items: req.items, currency: req.currency });
+    const validation = adapter.validateOrder({
+      items: req.items,
+      currency: req.currency,
+    });
 
     if (!validation.valid) {
       throw APIError.invalidArgument(validation.reason ?? "Order validation failed");
@@ -28,5 +31,5 @@ export const createOrder = api<CreateOrderRequest, CreateOrderResponse>(
       tenantId: adapter.tenantId,
       timestamp: new Date().toISOString(),
     };
-  },
+  }
 );

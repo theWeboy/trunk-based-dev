@@ -3,15 +3,15 @@ import { getNotificationsHealthPayload } from "../../services/notifications/heal
 
 describe("notifications health", () => {
   beforeEach(() => {
-    process.env["TENANT"] = "tenant-1";
+    process.env.TENANT = "tenant-1";
   });
 
   afterEach(() => {
-    delete process.env["TENANT"];
+    delete process.env.TENANT;
   });
 
   it("returns sns channel for tenant-1 (AWS)", () => {
-    process.env["TENANT"] = "tenant-1";
+    process.env.TENANT = "tenant-1";
     const payload = getNotificationsHealthPayload();
     expect(payload.status).toBe("ok");
     expect(payload.service).toBe("notifications");
@@ -21,7 +21,7 @@ describe("notifications health", () => {
   });
 
   it("returns pubsub channel for tenant-2 (GCP)", () => {
-    process.env["TENANT"] = "tenant-2";
+    process.env.TENANT = "tenant-2";
     const payload = getNotificationsHealthPayload();
     expect(payload.status).toBe("ok");
     expect(payload.tenantId).toBe("tenant-2");
@@ -30,7 +30,7 @@ describe("notifications health", () => {
   });
 
   it("returns pubsub channel for tenant-3 (GCP)", () => {
-    process.env["TENANT"] = "tenant-3";
+    process.env.TENANT = "tenant-3";
     const payload = getNotificationsHealthPayload();
     expect(payload.status).toBe("ok");
     expect(payload.tenantId).toBe("tenant-3");

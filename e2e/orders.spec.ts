@@ -40,7 +40,10 @@ test("POST /orders creates an order for the active tenant", async ({ request }) 
   });
   expect([200, 201, 400]).toContain(res.status());
   if (res.status() === 200 || res.status() === 201) {
-    const body = (await res.json()) as { order?: { id?: string; status?: string }; tenantId?: string };
+    const body = (await res.json()) as {
+      order?: { id?: string; status?: string };
+      tenantId?: string;
+    };
     expect(typeof body.order?.id).toBe("string");
     expect(body.order?.status).toBe("confirmed");
     expect(typeof body.tenantId).toBe("string");

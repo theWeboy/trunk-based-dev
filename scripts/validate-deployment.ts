@@ -29,7 +29,11 @@ function check(label: string, pass: boolean, detail?: string): void {
 
 function run(cmd: string): { ok: boolean; output: string } {
   try {
-    const output = execSync(cmd, { cwd: ROOT, encoding: "utf8", stdio: "pipe" });
+    const output = execSync(cmd, {
+      cwd: ROOT,
+      encoding: "utf8",
+      stdio: "pipe",
+    });
     return { ok: true, output };
   } catch (e: unknown) {
     const err = e as { stdout?: string; stderr?: string; message?: string };
@@ -40,9 +44,9 @@ function run(cmd: string): { ok: boolean; output: string } {
 console.log("\n=== Pre-Production Validation ===\n");
 
 // 1. Semver check
-const pkg = JSON.parse(
-  (await Bun.file(join(ROOT, "package.json")).text()),
-) as { version?: string };
+const pkg = JSON.parse(await Bun.file(join(ROOT, "package.json")).text()) as {
+  version?: string;
+};
 const version = pkg.version ?? "";
 const semverRegex = /^\d+\.\d+\.\d+$/;
 check("package.json version is valid semver", semverRegex.test(version), version);
@@ -51,14 +55,12 @@ check("package.json version is valid semver", semverRegex.test(version), version
 const changesetDir = join(ROOT, ".changeset");
 let pendingChangesets = 0;
 if (existsSync(changesetDir)) {
-  const files = readdirSync(changesetDir).filter(
-    (f) => f.endsWith(".md") && f !== "README.md",
-  );
+  const files = readdirSync(changesetDir).filter((f) => f.endsWith(".md") && f !== "README.md");
   pendingChangesets = files.length;
   check(
     "No pending changeset files (Version Packages PR must be merged)",
     pendingChangesets === 0,
-    pendingChangesets > 0 ? `Found: ${files.join(", ")}` : undefined,
+    pendingChangesets > 0 ? `Found: ${files.join(", ")}` : undefined
   );
 } else {
   check("Changeset directory exists", false, ".changeset/ not found");

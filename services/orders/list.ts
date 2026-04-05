@@ -44,5 +44,5 @@ export const listOrders = api<void, ListOrdersResponse>(
       tenantId: adapter.tenantId,
       timestamp: new Date().toISOString(),
     };
-  },
+  }
 );

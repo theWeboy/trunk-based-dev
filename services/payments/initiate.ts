@@ -1,4 +1,4 @@
-import { api, APIError } from "encore.dev/api";
+import { APIError, api } from "encore.dev/api";
 import { getAdapter } from "../../shared/adapters/factory/adapter.factory.js";
 import type { InitiatePaymentRequest, InitiatePaymentResponse } from "./types.js";
 
@@ -21,5 +21,5 @@ export const initiatePayment = api<InitiatePaymentRequest, InitiatePaymentRespon
       currency: req.currency,
       timestamp: new Date().toISOString(),
     };
-  },
+  }
 );

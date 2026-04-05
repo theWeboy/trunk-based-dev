@@ -4,5 +4,5 @@ import type { PaymentHealthResponse } from "./types.js";
 
 export const paymentsHealth = api<void, PaymentHealthResponse>(
   { method: "GET", path: "/payments/health", expose: true },
-  async (): Promise<PaymentHealthResponse> => getPaymentsHealthPayload(),
+  async (): Promise<PaymentHealthResponse> => getPaymentsHealthPayload()
 );

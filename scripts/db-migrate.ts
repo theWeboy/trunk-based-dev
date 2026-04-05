@@ -5,7 +5,7 @@ import { join } from "node:path";
 
 const rootDir = new URL("..", import.meta.url).pathname;
 const migrationsDir = join(rootDir, "migrations");
-const databaseUrl = process.env["DATABASE_URL"] ?? "";
+const databaseUrl = process.env.DATABASE_URL ?? "";
 
 console.log("Starting dummy migration job...");
 
@@ -33,4 +33,6 @@ for (const file of migrationFiles) {
   console.log(`- ${file}`);
 }
 
-console.log("Dummy repo does not apply SQL migrations; job completed successfully for pipeline validation.");
+console.log(
+  "Dummy repo does not apply SQL migrations; job completed successfully for pipeline validation."
+);

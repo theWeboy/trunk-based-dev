@@ -4,7 +4,7 @@ import type { SendNotificationRequest, SendNotificationResponse } from "./types.
 
 export const sendNotification = api<SendNotificationRequest, SendNotificationResponse>(
   { method: "POST", path: "/notifications/send", expose: true },
-  async (req: SendNotificationRequest): Promise<SendNotificationResponse> => {
+  async (_req: SendNotificationRequest): Promise<SendNotificationResponse> => {
     const adapter = getAdapter();
     const channel = adapter.getNotificationChannel();
 
@@ -15,5 +15,5 @@ export const sendNotification = api<SendNotificationRequest, SendNotificationRes
       status: "queued",
       timestamp: new Date().toISOString(),
     };
-  },
+  }
 );

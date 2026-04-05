@@ -41,7 +41,7 @@ describe("tenant config", () => {
 
   it("all tenants have distinct tenantIds", () => {
     const ids = (["tenant-1", "tenant-2", "tenant-3"] as TenantId[]).map(
-      (t) => getTenantConfig(t).tenantId,
+      (t) => getTenantConfig(t).tenantId
     );
     expect(new Set(ids).size).toBe(3);
   });

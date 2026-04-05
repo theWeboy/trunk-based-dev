@@ -1,18 +1,16 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("encore.dev/api", () => ({
-  api: <TRequest, TResponse>(
-    _meta: unknown,
-    handler: (request: TRequest) => Promise<TResponse>,
-  ) => handler,
+  api: <TRequest, TResponse>(_meta: unknown, handler: (request: TRequest) => Promise<TResponse>) =>
+    handler,
   APIError: {
     invalidArgument: (message: string) => new Error(message),
   },
 }));
 
 import { health } from "../../services/api/health";
-import { sendNotification } from "../../services/notifications/send";
 import { notificationsHealth } from "../../services/notifications/health";
+import { sendNotification } from "../../services/notifications/send";
 import { createOrder } from "../../services/orders/create";
 import { ordersHealth } from "../../services/orders/health";
 import { listOrders } from "../../services/orders/list";
@@ -21,11 +19,11 @@ import { initiatePayment } from "../../services/payments/initiate";
 
 describe("service endpoints", () => {
   beforeEach(() => {
-    process.env["TENANT"] = "tenant-1";
+    process.env.TENANT = "tenant-1";
   });
 
   afterEach(() => {
-    delete process.env["TENANT"];
+    delete process.env.TENANT;
   });
 
   it("returns api health payload from the exposed handler", async () => {
@@ -55,12 +53,12 @@ describe("service endpoints", () => {
       createOrder({
         items: [{ productId: "p-1", quantity: 1, unitPrice: 10 }],
         currency: "EUR",
-      }),
+      })
     ).rejects.toThrow(/USD/);
   });
 
   it("lists only seed orders for the active tenant", async () => {
-    process.env["TENANT"] = "tenant-2";
+    process.env.TENANT = "tenant-2";
 
     const response = await listOrders();
 
@@ -78,7 +76,7 @@ describe("service endpoints", () => {
   });
 
   it("queues a notification using the tenant channel", async () => {
-    process.env["TENANT"] = "tenant-3";
+    process.env.TENANT = "tenant-3";
 
     const response = await sendNotification({
       recipient: "demo@example.com",
@@ -93,7 +91,7 @@ describe("service endpoints", () => {
   });
 
   it("returns the notifications health payload from the endpoint", async () => {
-    process.env["TENANT"] = "tenant-2";
+    process.env.TENANT = "tenant-2";
 
     const response = await notificationsHealth();
 
@@ -103,7 +101,7 @@ describe("service endpoints", () => {
   });
 
   it("initiates a payment using the tenant gateway", async () => {
-    process.env["TENANT"] = "tenant-3";
+    process.env.TENANT = "tenant-3";
 
     const response = await initiatePayment({
       orderId: "ord-123",
@@ -125,12 +123,12 @@ describe("service endpoints", () => {
         amount: 0,
         currency: "USD",
         paymentMethod: "card",
-      }),
+      })
     ).rejects.toThrow(/greater than zero/);
   });
 
   it("returns the payments health payload from the endpoint", async () => {
-    process.env["TENANT"] = "tenant-1";
+    process.env.TENANT = "tenant-1";
 
     const response = await paymentsHealth();
 

@@ -3,15 +3,15 @@ import { getOrdersHealthPayload } from "../../services/orders/health-payload";
 
 describe("orders health", () => {
   beforeEach(() => {
-    process.env["TENANT"] = "tenant-1";
+    process.env.TENANT = "tenant-1";
   });
 
   afterEach(() => {
-    delete process.env["TENANT"];
+    delete process.env.TENANT;
   });
 
   it("returns status ok for tenant-1", () => {
-    process.env["TENANT"] = "tenant-1";
+    process.env.TENANT = "tenant-1";
     const payload = getOrdersHealthPayload();
     expect(payload.status).toBe("ok");
     expect(payload.service).toBe("orders");
@@ -21,7 +21,7 @@ describe("orders health", () => {
   });
 
   it("returns status ok for tenant-2", () => {
-    process.env["TENANT"] = "tenant-2";
+    process.env.TENANT = "tenant-2";
     const payload = getOrdersHealthPayload();
     expect(payload.status).toBe("ok");
     expect(payload.tenantId).toBe("tenant-2");
@@ -29,7 +29,7 @@ describe("orders health", () => {
   });
 
   it("returns status ok for tenant-3", () => {
-    process.env["TENANT"] = "tenant-3";
+    process.env.TENANT = "tenant-3";
     const payload = getOrdersHealthPayload();
     expect(payload.status).toBe("ok");
     expect(payload.tenantId).toBe("tenant-3");

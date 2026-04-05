@@ -4,7 +4,7 @@ import type { TenantId } from "../../shared/types/index";
 
 describe("adapter factory", () => {
   afterEach(() => {
-    delete process.env["TENANT"];
+    delete process.env.TENANT;
   });
 
   it("returns tenant-1 adapter (AWS) when tenantId is passed explicitly", () => {
@@ -26,13 +26,13 @@ describe("adapter factory", () => {
   });
 
   it("reads tenant from TENANT env var when no tenantId is passed", () => {
-    process.env["TENANT"] = "tenant-2";
+    process.env.TENANT = "tenant-2";
     const adapter = getAdapter();
     expect(adapter.tenantId).toBe("tenant-2");
   });
 
   it("falls back to tenant-1 when TENANT is not set", () => {
-    delete process.env["TENANT"];
+    delete process.env.TENANT;
     const adapter = getAdapter();
     expect(adapter.tenantId).toBe("tenant-1");
   });
@@ -44,7 +44,10 @@ describe("adapter factory", () => {
 
   it("tenant-1 rejects orders over 100 items", () => {
     const adapter = getAdapter("tenant-1");
-    const result = adapter.validateOrder({ items: Array(101).fill({}), currency: "USD" });
+    const result = adapter.validateOrder({
+      items: Array(101).fill({}),
+      currency: "USD",
+    });
     expect(result.valid).toBe(false);
     expect(result.reason).toContain("100");
   });
@@ -65,13 +68,19 @@ describe("adapter factory", () => {
 
   it("tenant-2 rejects orders over 50 items", () => {
     const adapter = getAdapter("tenant-2");
-    const result = adapter.validateOrder({ items: Array(51).fill({}), currency: "EUR" });
+    const result = adapter.validateOrder({
+      items: Array(51).fill({}),
+      currency: "EUR",
+    });
     expect(result.valid).toBe(false);
   });
 
   it("tenant-3 rejects orders over 25 items (EU compliance)", () => {
     const adapter = getAdapter("tenant-3");
-    const result = adapter.validateOrder({ items: Array(26).fill({}), currency: "GBP" });
+    const result = adapter.validateOrder({
+      items: Array(26).fill({}),
+      currency: "GBP",
+    });
     expect(result.valid).toBe(false);
     expect(result.reason).toContain("25");
   });
@@ -84,15 +93,15 @@ describe("adapter factory", () => {
   });
 
   it("notification channels differ per tenant", () => {
-    const channels = (["tenant-1", "tenant-2", "tenant-3"] as TenantId[]).map(
-      (t) => getAdapter(t).getNotificationChannel(),
+    const channels = (["tenant-1", "tenant-2", "tenant-3"] as TenantId[]).map((t) =>
+      getAdapter(t).getNotificationChannel()
     );
     expect(new Set(channels).size).toBe(3);
   });
 
   it("payment gateways differ per tenant", () => {
-    const gateways = (["tenant-1", "tenant-2", "tenant-3"] as TenantId[]).map(
-      (t) => getAdapter(t).getPaymentGateway(),
+    const gateways = (["tenant-1", "tenant-2", "tenant-3"] as TenantId[]).map((t) =>
+      getAdapter(t).getPaymentGateway()
     );
     expect(gateways[0]).toBe("stripe-us");
     expect(gateways[1]).toBe("stripe-eu");

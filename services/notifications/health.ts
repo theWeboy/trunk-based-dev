@@ -4,5 +4,5 @@ import type { NotificationHealthResponse } from "./types.js";
 
 export const notificationsHealth = api<void, NotificationHealthResponse>(
   { method: "GET", path: "/notifications/health", expose: true },
-  async (): Promise<NotificationHealthResponse> => getNotificationsHealthPayload(),
+  async (): Promise<NotificationHealthResponse> => getNotificationsHealthPayload()
 );

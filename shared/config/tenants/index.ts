@@ -16,5 +16,5 @@ export function getTenantConfig(tenantId: TenantId): TenantConfig {
   return config;
 }
 
-export { tenant1Config, tenant2Config, tenant3Config };
 export type { TenantConfig };
+export { tenant1Config, tenant2Config, tenant3Config };
