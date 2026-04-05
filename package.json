@@ -20,7 +20,7 @@
     "validate:production": "bun run scripts/validate-deployment.ts production"
   },
   "dependencies": {
-    "encore.dev": "^1.54.2"
+    "encore.dev": "^1.56.3"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.3.13",

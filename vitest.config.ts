@@ -1,7 +1,7 @@
-import { defineConfig } from "vitest/config";
 import { resolve } from "node:path";
+import { defineConfig } from "vitest/config";
 
-const parsedCoverageThreshold = Number.parseInt(process.env["COVERAGE_THRESHOLD"] ?? "", 10);
+const parsedCoverageThreshold = Number.parseInt(process.env.COVERAGE_THRESHOLD ?? "", 10);
 const coverageThresholds = Number.isFinite(parsedCoverageThreshold)
   ? {
       lines: parsedCoverageThreshold,

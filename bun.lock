@@ -5,7 +5,7 @@
     "": {
       "name": "trunk-based-dev",
       "dependencies": {
-        "encore.dev": "^1.54.2",
+        "encore.dev": "^1.56.3",
       },
       "devDependencies": {
         "@biomejs/biome": "^2.3.13",
@@ -263,7 +263,7 @@
 
     "dir-glob": ["dir-glob@3.0.1", "", { "dependencies": { "path-type": "^4.0.0" } }, "sha512-WkrWp9GR4KXfKGYzOLmTuGVi1UWFfws377n9cc55/tb6DuqyF6pcQ5AbiHEshaDpY9v6oaSr2XCDidGmMwdzIA=="],
 
-    "encore.dev": ["encore.dev@1.56.0", "", {}, "sha512-+v+Xao4sii04tfC8/bYE47JsEE3lB4acwV2RNfclo2JEhV4ixjD9+MQmHxLKadUqQ/S5mYL+iF+ca8s6/VAWCQ=="],
+    "encore.dev": ["encore.dev@1.56.3", "", {}, "sha512-wixxcZJBwToABkDK8yHt8zI0CcSKs4p8UEjPLxwkoI3/h0QCGasGRKtpZhrqqdBm8zoJBS+C/3S04vVfR/IhMg=="],
 
     "enquirer": ["enquirer@2.4.1", "", { "dependencies": { "ansi-colors": "^4.1.1", "strip-ansi": "^6.0.1" } }, "sha512-rRqJg/6gd538VHvR3PSrdRBb/1Vy2YfzHqzvbhGIQpDRKIa4FgV/54b5Q1xYSxOOwKvjXweS26E0Q+nAMwp2pQ=="],
 

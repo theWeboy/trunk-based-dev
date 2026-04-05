@@ -9,5 +9,9 @@ export default defineConfig({
   reporter: "list",
   use: { baseURL: "http://localhost:4000", trace: "on-first-retry" },
   projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
-  webServer: { command: "bun run dev", url: "http://localhost:4000/health", reuseExistingServer: !process.env.CI },
+  webServer: {
+    command: "bun run dev",
+    url: "http://localhost:4000/health",
+    reuseExistingServer: !process.env.CI,
+  },
 });
