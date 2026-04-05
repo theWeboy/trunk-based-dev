@@ -1,15 +1,15 @@
 # Creates/updates "Version Packages" PR when there are pending changesets on main.
 # Merging that PR bumps package.json and CHANGELOG.md only — no git tag.
 # The git tag and GitHub Release are created only after production deploy (see deploy-production.yml).
+#
+# Automatic push-to-main is disabled initially; run "Release (Version Packages)" manually from Actions
+# when you want to open/update the Version Packages PR. Re-enable push below when ready.
 name: Release (Version Packages)
 
 on:
   push:
     branches: [main]
-
-permissions:
-  contents: write
-  pull-requests: write
+  workflow_dispatch: {}
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -19,13 +19,15 @@ jobs:
   version:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
+    permissions:
+      contents: write
+      pull-requests: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
-      - uses: oven-sh/setup-bun@v1
-
+      - uses: oven-sh/setup-bun@v2
       - name: Cache Bun dependencies
         uses: actions/cache@v4
         with:

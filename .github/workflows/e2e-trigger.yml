@@ -1,0 +1,54 @@
+# Adds the `run-e2e` label when a maintainer comments /run-e2e on a PR.
+# The actual E2E workflow runs on pull_request so it uses the PR branch's
+# workflow file and code.
+name: E2E Trigger
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  trigger:
+    if: |
+      github.event.issue.pull_request &&
+      contains(github.event.comment.body, '/run-e2e') &&
+      (github.event.comment.author_association == 'MEMBER' ||
+       github.event.comment.author_association == 'OWNER' ||
+       github.event.comment.author_association == 'COLLABORATOR')
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Toggle E2E trigger label
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const pull_number = context.issue.number;
+            const label = 'run-e2e';
+
+            const labels = await github.rest.issues.listLabelsOnIssue({
+              owner,
+              repo,
+              issue_number: pull_number,
+            });
+
+            const hasLabel = labels.data.some((item) => item.name === label);
+            if (hasLabel) {
+              await github.rest.issues.removeLabel({
+                owner,
+                repo,
+                issue_number: pull_number,
+                name: label,
+              });
+            }
+
+            await github.rest.issues.addLabels({
+              owner,
+              repo,
+              issue_number: pull_number,
+              labels: [label],
+            });

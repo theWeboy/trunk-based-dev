@@ -48,11 +48,11 @@ jobs:
       NS: trunk-${{ inputs.environment }}-${{ inputs.tenant }}
       DEPLOYMENT: trunk-${{ inputs.service }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Configure AWS (tenant-1)
         if: inputs.tenant == 'tenant-1'
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: ${{ secrets.GH_ACTIONS_ROLE_ARN_TENANT_1 }}
           aws-region: ${{ env.AWS_REGION }}
