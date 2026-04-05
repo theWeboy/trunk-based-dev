@@ -37,18 +37,43 @@ jobs:
   sync-tenant-1:
     name: Mirror to ECR (tenant-1 / AWS)
     runs-on: ubuntu-24.04
+    outputs:
+      enabled: ${{ steps.precheck.outputs.enabled }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
+
+      - name: Check required secrets (tenant-1)
+        id: precheck
+        env:
+          DHI_REGISTRY_TOKEN: ${{ secrets.DHI_REGISTRY_TOKEN }}
+          DHI_REGISTRY_USERNAME: ${{ secrets.DHI_REGISTRY_USERNAME }}
+          DHI_REGISTRY_PASSWORD: ${{ secrets.DHI_REGISTRY_PASSWORD }}
+          GH_ACTIONS_ROLE_ARN_TENANT_1: ${{ secrets.GH_ACTIONS_ROLE_ARN_TENANT_1 }}
+          ECR_REGISTRY_TENANT_1: ${{ secrets.ECR_REGISTRY_TENANT_1 }}
+          AWS_REGION_TENANT_1: ${{ secrets.AWS_REGION_TENANT_1 }}
+        run: |
+          HAS_DHI_CREDS=false
+          if [ -n "$DHI_REGISTRY_TOKEN" ] || { [ -n "$DHI_REGISTRY_USERNAME" ] && [ -n "$DHI_REGISTRY_PASSWORD" ]; }; then
+            HAS_DHI_CREDS=true
+          fi
+
+          if [ "$HAS_DHI_CREDS" = true ] && [ -n "$GH_ACTIONS_ROLE_ARN_TENANT_1" ] && [ -n "$ECR_REGISTRY_TENANT_1" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Skipping tenant-1 DHI sync because one or more required GitHub secrets are missing."
+          fi
 
       - name: Install regctl
+        if: steps.precheck.outputs.enabled == 'true'
         run: |
           curl -sSL "https://github.com/regclient/regclient/releases/latest/download/regctl-linux-amd64" -o regctl
           chmod +x regctl
           sudo mv regctl /usr/local/bin/
           regctl version
-          regctl version
 
       - name: Login to DHI registry (dhi.io)
+        if: steps.precheck.outputs.enabled == 'true'
         run: |
           if [ -n "${{ secrets.DHI_REGISTRY_TOKEN }}" ]; then
             echo "${{ secrets.DHI_REGISTRY_TOKEN }}" | regctl registry login dhi.io --user '' --pass-stdin
@@ -57,17 +82,20 @@ jobs:
           fi
 
       - name: Configure AWS credentials (tenant-1)
-        uses: aws-actions/configure-aws-credentials@v4
+        if: steps.precheck.outputs.enabled == 'true'
+        uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: ${{ secrets.GH_ACTIONS_ROLE_ARN_TENANT_1 }}
           aws-region: ${{ secrets.AWS_REGION_TENANT_1 || 'us-east-1' }}
 
       - name: Login to ECR
+        if: steps.precheck.outputs.enabled == 'true'
         run: |
           aws ecr get-login-password --region ${{ secrets.AWS_REGION_TENANT_1 || 'us-east-1' }} | \
           regctl registry login ${{ secrets.ECR_REGISTRY_TENANT_1 }} --user AWS --pass-stdin
 
       - name: Copy DHI image to ECR (tenant-1)
+        if: steps.precheck.outputs.enabled == 'true'
         run: |
           ECR_TARGET="${{ secrets.ECR_REGISTRY_TENANT_1 }}/dhi-runtime-node:22-slim"
           regctl image copy ${{ env.DHI_IMAGE }} "$ECR_TARGET"
@@ -76,10 +104,35 @@ jobs:
   sync-tenant-2:
     name: Mirror to Artifact Registry (tenant-2 / GCP us-central1)
     runs-on: ubuntu-24.04
+    outputs:
+      enabled: ${{ steps.precheck.outputs.enabled }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
+
+      - name: Check required secrets (tenant-2)
+        id: precheck
+        env:
+          DHI_REGISTRY_TOKEN: ${{ secrets.DHI_REGISTRY_TOKEN }}
+          DHI_REGISTRY_USERNAME: ${{ secrets.DHI_REGISTRY_USERNAME }}
+          DHI_REGISTRY_PASSWORD: ${{ secrets.DHI_REGISTRY_PASSWORD }}
+          GCP_WORKLOAD_IDENTITY_PROVIDER_TENANT_2: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER_TENANT_2 }}
+          GCP_SERVICE_ACCOUNT_EMAIL_TENANT_2: ${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL_TENANT_2 }}
+          GAR_REGISTRY_TENANT_2: ${{ secrets.GAR_REGISTRY_TENANT_2 }}
+        run: |
+          HAS_DHI_CREDS=false
+          if [ -n "$DHI_REGISTRY_TOKEN" ] || { [ -n "$DHI_REGISTRY_USERNAME" ] && [ -n "$DHI_REGISTRY_PASSWORD" ]; }; then
+            HAS_DHI_CREDS=true
+          fi
+
+          if [ "$HAS_DHI_CREDS" = true ] && [ -n "$GCP_WORKLOAD_IDENTITY_PROVIDER_TENANT_2" ] && [ -n "$GCP_SERVICE_ACCOUNT_EMAIL_TENANT_2" ] && [ -n "$GAR_REGISTRY_TENANT_2" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Skipping tenant-2 DHI sync because one or more required GitHub secrets are missing."
+          fi
 
       - name: Install regctl
+        if: steps.precheck.outputs.enabled == 'true'
         run: |
           curl -sSL "https://github.com/regclient/regclient/releases/latest/download/regctl-linux-amd64" -o regctl
           chmod +x regctl
@@ -87,6 +140,7 @@ jobs:
           regctl version
 
       - name: Login to DHI registry (dhi.io)
+        if: steps.precheck.outputs.enabled == 'true'
         run: |
           if [ -n "${{ secrets.DHI_REGISTRY_TOKEN }}" ]; then
             echo "${{ secrets.DHI_REGISTRY_TOKEN }}" | regctl registry login dhi.io --user '' --pass-stdin
@@ -95,18 +149,22 @@ jobs:
           fi
 
       - name: Authenticate to GCP (tenant-2)
+        if: steps.precheck.outputs.enabled == 'true'
         uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER_TENANT_2 }}
           service_account: ${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL_TENANT_2 }}
 
       - name: Set up Cloud SDK
+        if: steps.precheck.outputs.enabled == 'true'
         uses: google-github-actions/setup-gcloud@v2
 
       - name: Configure Docker for Artifact Registry
+        if: steps.precheck.outputs.enabled == 'true'
         run: gcloud auth configure-docker ${{ secrets.GAR_REGISTRY_TENANT_2 }} --quiet
 
       - name: Copy DHI image to GAR (tenant-2)
+        if: steps.precheck.outputs.enabled == 'true'
         run: |
           GAR_TARGET="${{ secrets.GAR_REGISTRY_TENANT_2 }}/dhi-runtime-node:22-slim"
           regctl image copy ${{ env.DHI_IMAGE }} "$GAR_TARGET"
@@ -115,16 +173,42 @@ jobs:
   sync-tenant-3:
     name: Mirror to Artifact Registry (tenant-3 / GCP europe-west1)
     runs-on: ubuntu-24.04
+    outputs:
+      enabled: ${{ steps.precheck.outputs.enabled }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
+
+      - name: Check required secrets (tenant-3)
+        id: precheck
+        env:
+          DHI_REGISTRY_TOKEN: ${{ secrets.DHI_REGISTRY_TOKEN }}
+          DHI_REGISTRY_USERNAME: ${{ secrets.DHI_REGISTRY_USERNAME }}
+          DHI_REGISTRY_PASSWORD: ${{ secrets.DHI_REGISTRY_PASSWORD }}
+          GCP_WORKLOAD_IDENTITY_PROVIDER_TENANT_3: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER_TENANT_3 }}
+          GCP_SERVICE_ACCOUNT_EMAIL_TENANT_3: ${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL_TENANT_3 }}
+          GAR_REGISTRY_TENANT_3: ${{ secrets.GAR_REGISTRY_TENANT_3 }}
+        run: |
+          HAS_DHI_CREDS=false
+          if [ -n "$DHI_REGISTRY_TOKEN" ] || { [ -n "$DHI_REGISTRY_USERNAME" ] && [ -n "$DHI_REGISTRY_PASSWORD" ]; }; then
+            HAS_DHI_CREDS=true
+          fi
+
+          if [ "$HAS_DHI_CREDS" = true ] && [ -n "$GCP_WORKLOAD_IDENTITY_PROVIDER_TENANT_3" ] && [ -n "$GCP_SERVICE_ACCOUNT_EMAIL_TENANT_3" ] && [ -n "$GAR_REGISTRY_TENANT_3" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Skipping tenant-3 DHI sync because one or more required GitHub secrets are missing."
+          fi
 
       - name: Install regctl
+        if: steps.precheck.outputs.enabled == 'true'
         run: |
           curl -sSL "https://github.com/regclient/regclient/releases/latest/download/regctl-linux-amd64" -o regctl
           chmod +x regctl
           sudo mv regctl /usr/local/bin/
 
       - name: Login to DHI registry (dhi.io)
+        if: steps.precheck.outputs.enabled == 'true'
         run: |
           if [ -n "${{ secrets.DHI_REGISTRY_TOKEN }}" ]; then
             echo "${{ secrets.DHI_REGISTRY_TOKEN }}" | regctl registry login dhi.io --user '' --pass-stdin
@@ -133,18 +217,22 @@ jobs:
           fi
 
       - name: Authenticate to GCP (tenant-3)
+        if: steps.precheck.outputs.enabled == 'true'
         uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER_TENANT_3 }}
           service_account: ${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL_TENANT_3 }}
 
       - name: Set up Cloud SDK
+        if: steps.precheck.outputs.enabled == 'true'
         uses: google-github-actions/setup-gcloud@v2
 
       - name: Configure Docker for Artifact Registry
+        if: steps.precheck.outputs.enabled == 'true'
         run: gcloud auth configure-docker ${{ secrets.GAR_REGISTRY_TENANT_3 }} --quiet
 
       - name: Copy DHI image to GAR (tenant-3)
+        if: steps.precheck.outputs.enabled == 'true'
         run: |
           GAR_TARGET="${{ secrets.GAR_REGISTRY_TENANT_3 }}/dhi-runtime-node:22-slim"
           regctl image copy ${{ env.DHI_IMAGE }} "$GAR_TARGET"

@@ -1,13 +1,20 @@
-# Runs E2E tests when a maintainer comments /run-e2e on a PR.
-# Updates the "E2E Tests" commit status so the merge gate opens on success.
+# Runs E2E tests from the PR context when the PR has the `run-e2e` label.
+# This ensures the workflow file and checked-out code come from the PR branch,
+# not the default branch issue_comment context.
 name: E2E Tests
 
 on:
-  issue_comment:
-    types: [created]
+  pull_request:
+    types: [labeled, synchronize, reopened]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: 'Pull request number to run E2E against'
+        required: false
+        type: string
 
 concurrency:
-  group: e2e-${{ github.event.issue.number }}
+  group: e2e-${{ github.event.pull_request.number || inputs.pr_number || github.sha }}
   cancel-in-progress: true
 
 permissions:
@@ -18,45 +25,79 @@ permissions:
 jobs:
   e2e:
     if: |
-      github.event.issue.pull_request &&
-      contains(github.event.comment.body, '/run-e2e') &&
-      (github.event.comment.author_association == 'MEMBER' ||
-       github.event.comment.author_association == 'OWNER' ||
-       github.event.comment.author_association == 'COLLABORATOR')
+      github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'run-e2e')
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
-      - name: Get PR metadata
-        id: pr
+      - name: Resolve target revision
+        id: target
         uses: actions/github-script@v7
         with:
           script: |
-            const pr = await github.rest.pulls.get({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              pull_number: context.issue.number
-            });
-            core.setOutput('sha', pr.data.head.sha);
-            core.setOutput('ref', pr.data.head.ref);
+            if (context.eventName === 'workflow_dispatch') {
+              const prNumberRaw = '${{ inputs.pr_number }}'.trim();
+              if (prNumberRaw) {
+                const pull_number = Number(prNumberRaw);
+                if (!Number.isInteger(pull_number) || pull_number <= 0) {
+                  core.setFailed(`Invalid pr_number input: ${prNumberRaw}`);
+                  return;
+                }
+
+                const pr = await github.rest.pulls.get({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  pull_number,
+                });
+
+                core.setOutput('sha', pr.data.head.sha);
+                core.setOutput('head_repo', pr.data.head.repo.full_name);
+                core.setOutput('pr_number', String(pull_number));
+                return;
+              }
+
+              core.setOutput('sha', context.sha);
+              core.setOutput('head_repo', `${context.repo.owner}/${context.repo.repo}`);
+              core.setOutput('pr_number', '');
+              return;
+            }
+
+            core.setOutput('sha', '${{ github.event.pull_request.head.sha }}');
+            core.setOutput('head_repo', '${{ github.event.pull_request.head.repo.full_name }}');
+            core.setOutput('pr_number', '${{ github.event.pull_request.number }}');
 
       - name: Set E2E status to in-progress
+        if: steps.target.outputs.pr_number != ''
         uses: actions/github-script@v7
         with:
           script: |
             await github.rest.repos.createCommitStatus({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              sha: '${{ steps.pr.outputs.sha }}',
+              sha: '${{ steps.target.outputs.sha }}',
               state: 'pending',
               context: 'E2E Tests',
               description: 'Running E2E tests...'
             });
 
-      - uses: actions/checkout@v4
+      - name: Checkout PR head
+        uses: actions/checkout@v6
         with:
-          ref: ${{ steps.pr.outputs.sha }}
+          repository: ${{ steps.target.outputs.head_repo }}
+          ref: ${{ steps.target.outputs.sha }}
+          fetch-depth: 0
 
-      - uses: oven-sh/setup-bun@v1
+      - name: Verify PR head checkout
+        run: |
+          ACTUAL_SHA=$(git rev-parse HEAD)
+          EXPECTED_SHA="${{ steps.target.outputs.sha }}"
+          echo "Checked out SHA: ${ACTUAL_SHA}"
+          echo "Expected PR SHA: ${EXPECTED_SHA}"
+          if [ "${ACTUAL_SHA}" != "${EXPECTED_SHA}" ]; then
+            echo "::error::Checked out commit does not match the PR head SHA"
+            exit 1
+          fi
+
+      - uses: oven-sh/setup-bun@v2
 
       - name: Cache Bun dependencies
         uses: actions/cache@v4
@@ -76,7 +117,7 @@ jobs:
         run: bun run test:e2e
 
       - name: Update E2E commit status
-        if: always()
+        if: always() && steps.target.outputs.pr_number != ''
         uses: actions/github-script@v7
         with:
           script: |
@@ -92,7 +133,7 @@ jobs:
             await github.rest.repos.createCommitStatus({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              sha: '${{ steps.pr.outputs.sha }}',
+              sha: '${{ steps.target.outputs.sha }}',
               state,
               context: 'E2E Tests',
               description,

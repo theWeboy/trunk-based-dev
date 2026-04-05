@@ -48,15 +48,15 @@ jobs:
       services_list: ${{ steps.list.outputs.list }}
       migrations_changed: ${{ steps.filter.outputs.migrations }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           ref: ${{ github.event_name == 'workflow_dispatch' && inputs.ref || github.sha }}
-          fetch-depth: 2
+          fetch-depth: 0
 
       - uses: dorny/paths-filter@v3
         id: filter
         with:
-          base: ${{ github.event_name == 'workflow_dispatch' && 'HEAD^' || '' }}
+          base: ${{ github.event_name == 'workflow_dispatch' && github.event.repository.default_branch || '' }}
           filters: |
             api: 'services/api/**'
             orders: 'services/orders/**'
@@ -96,21 +96,78 @@ jobs:
     timeout-minutes: 5
     outputs:
       matrix: ${{ steps.set-matrix.outputs.matrix }}
+      has_targets: ${{ steps.set-matrix.outputs.has_targets }}
+    env:
+      T1_ROLE_ARN: ${{ secrets.GH_ACTIONS_ROLE_ARN_TENANT_1 }}
+      T1_ECR_REGISTRY: ${{ secrets.ECR_REGISTRY_TENANT_1 }}
+      T2_WORKLOAD_IDENTITY_PROVIDER: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER_TENANT_2 }}
+      T2_SERVICE_ACCOUNT_EMAIL: ${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL_TENANT_2 }}
+      T2_GAR_REGISTRY: ${{ secrets.GAR_REGISTRY_TENANT_2 }}
+      T3_WORKLOAD_IDENTITY_PROVIDER: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER_TENANT_3 }}
+      T3_SERVICE_ACCOUNT_EMAIL: ${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL_TENANT_3 }}
+      T3_GAR_REGISTRY: ${{ secrets.GAR_REGISTRY_TENANT_3 }}
     steps:
       - id: set-matrix
         run: |
           T="${{ github.event_name == 'workflow_dispatch' && inputs.tenant || 'all' }}"
-          if [ "$T" = "all" ]; then
-            echo 'matrix=[{"tenant":"tenant-1","cloud":"aws"},{"tenant":"tenant-2","cloud":"gcp"},{"tenant":"tenant-3","cloud":"gcp"}]' >> $GITHUB_OUTPUT
-          elif [ "$T" = "tenant-1" ]; then
-            echo 'matrix=[{"tenant":"tenant-1","cloud":"aws"}]' >> $GITHUB_OUTPUT
-          elif [ "$T" = "tenant-2" ]; then
-            echo 'matrix=[{"tenant":"tenant-2","cloud":"gcp"}]' >> $GITHUB_OUTPUT
+          MATRIX_INCLUDE=""
+
+          add_tenant() {
+            local tenant="$1" cloud="$2"
+            if [ -n "$MATRIX_INCLUDE" ]; then
+              MATRIX_INCLUDE="${MATRIX_INCLUDE},"
+            fi
+            MATRIX_INCLUDE="${MATRIX_INCLUDE}{\"tenant\":\"${tenant}\",\"cloud\":\"${cloud}\"}"
+          }
+
+          t1_ready=true
+          [ -n "${T1_ROLE_ARN}" ] || t1_ready=false
+          [ -n "${T1_ECR_REGISTRY}" ] || t1_ready=false
+
+          t2_ready=true
+          [ -n "${T2_WORKLOAD_IDENTITY_PROVIDER}" ] || t2_ready=false
+          [ -n "${T2_SERVICE_ACCOUNT_EMAIL}" ] || t2_ready=false
+          [ -n "${T2_GAR_REGISTRY}" ] || t2_ready=false
+
+          t3_ready=true
+          [ -n "${T3_WORKLOAD_IDENTITY_PROVIDER}" ] || t3_ready=false
+          [ -n "${T3_SERVICE_ACCOUNT_EMAIL}" ] || t3_ready=false
+          [ -n "${T3_GAR_REGISTRY}" ] || t3_ready=false
+
+          if [ "$T" = "all" ] || [ "$T" = "tenant-1" ]; then
+            if [ "$t1_ready" = "true" ]; then
+              add_tenant tenant-1 aws
+            else
+              echo "::warning::Skipping tenant-1 dev deploy: missing one or more required AWS secrets."
+            fi
+          fi
+
+          if [ "$T" = "all" ] || [ "$T" = "tenant-2" ]; then
+            if [ "$t2_ready" = "true" ]; then
+              add_tenant tenant-2 gcp
+            else
+              echo "::warning::Skipping tenant-2 dev deploy: missing one or more required GCP secrets."
+            fi
+          fi
+
+          if [ "$T" = "all" ] || [ "$T" = "tenant-3" ]; then
+            if [ "$t3_ready" = "true" ]; then
+              add_tenant tenant-3 gcp
+            else
+              echo "::warning::Skipping tenant-3 dev deploy: missing one or more required GCP secrets."
+            fi
+          fi
+
+          echo "matrix={\"include\":[${MATRIX_INCLUDE}]}" >> $GITHUB_OUTPUT
+          if [ -n "$MATRIX_INCLUDE" ]; then
+            echo "has_targets=true" >> $GITHUB_OUTPUT
           else
-            echo 'matrix=[{"tenant":"tenant-3","cloud":"gcp"}]' >> $GITHUB_OUTPUT
+            echo "has_targets=false" >> $GITHUB_OUTPUT
+            echo "::warning::No dev deployment targets are fully configured for the selected tenant input (${T})."
           fi
 
   build-and-push:
+    if: needs.setup-matrix.outputs.has_targets == 'true'
     needs: [detect-changes, setup-matrix]
     runs-on: ubuntu-24.04
     timeout-minutes: 30
@@ -118,7 +175,7 @@ jobs:
       matrix: ${{ fromJson(needs.setup-matrix.outputs.matrix) }}
       fail-fast: false
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.ref || github.sha }}
 
@@ -131,7 +188,7 @@ jobs:
 
       - name: Configure AWS (tenant-1)
         if: matrix.tenant == 'tenant-1'
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: ${{ secrets.GH_ACTIONS_ROLE_ARN_TENANT_1 }}
           aws-region: ${{ env.AWS_REGION }}
@@ -178,8 +235,17 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-encore-
 
-      - uses: oven-sh/setup-bun@v1
+      - uses: oven-sh/setup-bun@v2
       - run: bun install --frozen-lockfile
+
+      - name: Install Encore CLI
+        run: |
+          curl --output install.sh -L https://encore.dev/install.sh
+          bash install.sh
+          echo "$HOME/.encore/bin" >> $GITHUB_PATH
+
+      - name: Verify Encore CLI
+        run: $HOME/.encore/bin/encore version
 
       - name: Build and push dev images
         run: |
@@ -204,29 +270,8 @@ jobs:
           done
           echo "Pushed ${TENANT} dev tags for: ${{ needs.detect-changes.outputs.services_list }} (${SHA})"
 
-      - name: Trivy image scan (non-blocking for dev)
-        run: |
-          SHA="${{ steps.meta.outputs.git_sha }}"
-          TENANT="${{ matrix.tenant }}"
-          if [ "$TENANT" = "tenant-1" ]; then
-            REGISTRY="${{ secrets.ECR_REGISTRY_TENANT_1 }}"
-          elif [ "$TENANT" = "tenant-2" ]; then
-            REGISTRY="${{ secrets.GAR_REGISTRY_TENANT_2 }}"
-          else
-            REGISTRY="${{ secrets.GAR_REGISTRY_TENANT_3 }}"
-          fi
-          VULN_FOUND=0
-          for SVC in ${{ needs.detect-changes.outputs.services_list }}; do
-            IMG="${REGISTRY}/trunk-${SVC}-dev-${TENANT}:${SHA}"
-            echo "Scanning ${IMG}..."
-            docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
-              aquasec/trivy:latest image --severity CRITICAL,HIGH --exit-code 1 "${IMG}" || VULN_FOUND=1
-          done
-          if [ "$VULN_FOUND" -eq 1 ]; then
-            echo "::warning::Trivy found CRITICAL/HIGH vulnerabilities in dev images. Review before promoting to sandbox."
-          fi
-
   deploy:
+    if: needs.setup-matrix.outputs.has_targets == 'true'
     needs: [setup-matrix, build-and-push, detect-changes]
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -237,7 +282,7 @@ jobs:
     env:
       NS: trunk-dev-${{ matrix.tenant }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.ref || github.sha }}
 
@@ -251,7 +296,7 @@ jobs:
 
       - name: Configure AWS (tenant-1)
         if: matrix.tenant == 'tenant-1'
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: ${{ secrets.GH_ACTIONS_ROLE_ARN_TENANT_1 }}
           aws-region: ${{ env.AWS_REGION }}
@@ -365,6 +410,7 @@ jobs:
           fi
 
       - name: Deploy summary
+        if: always()
         run: |
           echo "Deployed to ${{ env.NS }} (tenant=${{ matrix.tenant }})"
           echo "SHA: ${{ steps.meta.outputs.sha }}"

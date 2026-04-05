@@ -11,36 +11,28 @@ concurrency:
   group: ci-${{ github.event.pull_request.number || github.sha }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+  pull-requests: read
+
 jobs:
   validate:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
-
-      - uses: oven-sh/setup-bun@v1
-      - name: Cache Bun dependencies
-        uses: actions/cache@v4
-        with:
-          path: |
-            node_modules
-            ~/.bun/install/cache
-          key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-bun-
-      - run: bun install --frozen-lockfile
-      - run: bun run biome check
-      - run: bun run typecheck
-      - run: bun run test:run -- --coverage --coverage-threshold=90
 
       - name: Check for changeset (skip if label or docs-only)
         if: github.event_name == 'pull_request'
         env:
-          PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+          GH_TOKEN: ${{ github.token }}
         run: |
-          if [[ "$PR_LABELS" == *"skip-changeset"* ]]; then
+          # Fetch current labels from the API — re-runs use the stale original
+          # event payload, so github.event.pull_request.labels may be outdated.
+          LABELS=$(gh pr view ${{ github.event.pull_request.number }} --json labels --jq '.labels[].name')
+          if echo "$LABELS" | grep -qx 'skip-changeset'; then
             echo "Label skip-changeset present — skipping changeset check."
             exit 0
           fi
@@ -56,8 +48,33 @@ jobs:
           fi
           echo "Changeset check passed."
 
+      - uses: oven-sh/setup-bun@v2
+      - name: Cache Bun dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            node_modules
+            ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-bun-
+      - run: bun install --frozen-lockfile
+      - run: bun run biome check
+      - run: bun run typecheck
+      - run: bun run test:run -- --coverage --coverage-threshold=90
+
+      - name: Check SonarCloud token
+        id: sonar-check
+        if: github.event_name == 'pull_request'
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        run: |
+          if [ -n "$SONAR_TOKEN" ]; then
+            echo "has-token=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: SonarCloud SAST
-        if: github.event_name == 'pull_request' && env.SONAR_TOKEN != ''
+        if: steps.sonar-check.outputs.has-token == 'true'
         uses: SonarSource/sonarcloud-github-action@v3
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}

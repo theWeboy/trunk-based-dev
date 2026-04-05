@@ -49,15 +49,15 @@ jobs:
       services_list: ${{ steps.list.outputs.list }}
       migrations_changed: ${{ steps.filter.outputs.migrations }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           ref: ${{ inputs.ref }}
-          fetch-depth: 2
+          fetch-depth: 0
 
       - uses: dorny/paths-filter@v3
         id: filter
         with:
-          base: 'HEAD^'
+          base: ${{ github.event.repository.default_branch }}
           filters: |
             api: 'services/api/**'
             orders: 'services/orders/**'
@@ -96,11 +96,11 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           ref: ${{ inputs.ref }}
           fetch-depth: 0
-      - uses: oven-sh/setup-bun@v1
+      - uses: oven-sh/setup-bun@v2
       - name: Cache Bun dependencies
         uses: actions/cache@v4
         with:
@@ -146,7 +146,7 @@ jobs:
       matrix: ${{ fromJson(needs.setup-matrix.outputs.matrix) }}
       fail-fast: false
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           ref: ${{ inputs.ref }}
           fetch-depth: 0
@@ -162,7 +162,7 @@ jobs:
 
       - name: Configure AWS (tenant-1)
         if: matrix.tenant == 'tenant-1'
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: ${{ secrets.GH_ACTIONS_ROLE_ARN_TENANT_1 }}
           aws-region: ${{ env.AWS_REGION }}
@@ -203,8 +203,17 @@ jobs:
           key: ${{ runner.os }}-encore-${{ hashFiles('bun.lock', 'package.json') }}
           restore-keys: |
             ${{ runner.os }}-encore-
-      - uses: oven-sh/setup-bun@v1
+      - uses: oven-sh/setup-bun@v2
       - run: bun install --frozen-lockfile
+
+      - name: Install Encore CLI
+        run: |
+          curl --output install.sh -L https://encore.dev/install.sh
+          bash install.sh
+          echo "$HOME/.encore/bin" >> $GITHUB_PATH
+
+      - name: Verify Encore CLI
+        run: $HOME/.encore/bin/encore version
 
       - name: Resolve services list
         id: svcs
@@ -276,7 +285,7 @@ jobs:
     env:
       NS: trunk-production-${{ matrix.tenant }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           ref: ${{ inputs.ref }}
 
@@ -294,7 +303,7 @@ jobs:
 
       - name: Configure AWS (tenant-1)
         if: matrix.tenant == 'tenant-1'
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: ${{ secrets.GH_ACTIONS_ROLE_ARN_TENANT_1 }}
           aws-region: ${{ env.AWS_REGION }}
@@ -410,7 +419,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           ref: ${{ inputs.ref }}
           fetch-depth: 0
